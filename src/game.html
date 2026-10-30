@@ -2007,6 +2007,17 @@ function useAction() {
   const it = nearestInteract();
   if (it?.type === 'tool') { pickUpTool(it.id); return; }
   if (it?.type === 'sack') {
+    // empty it into the bag you're wearing first; you only carry what doesn't fit
+    const s = it.s, room = bagCap() - S.bag;
+    if (room > 0) {
+      const take = Math.min(room, s.n), val = s.n ? s.v * take / s.n : s.v, rest = { n: s.n - take, v: s.v - val };
+      if (!takeSack(s)) return;
+      S.bag += take; S.bagValue += val; thudSound();
+      if (rest.n <= 0) { toast(`Added to your bag · +${fmt(val * sellMult())}`, 'good', 1.4); return; }
+      if (!S.held && S.carry.length < carryMax()) { S.carry.push(rest); syncTool(); toast(`Bag topped up · carrying the rest (${fmt(rest.v * sellMult())})`, '', 2); }
+      else { addSack({ x: s.x, z: s.z, n: rest.n, v: rest.v }); toast(`Bag topped up · the rest (${fmt(rest.v * sellMult())}) stays here`, 'warn', 2.2); }
+      return;
+    }
     if (S.held) { toast(`Put down the ${toolDef(S.held).name} first (G)`, 'warn'); denySound(); return; }
     if (S.carry.length >= carryMax()) { toast(`Your arms are full (${carryMax()} bag${carryMax() > 1 ? 's' : ''}) · Strong Arms lets you carry more`, 'warn'); denySound(); return; }
     if (!takeSack(it.s)) return;
@@ -2865,7 +2876,7 @@ function frame(now) {
     const it = nearestInteract();
     let prompt = '';
     if (it?.type === 'tool') { const t = toolDef(it.id); prompt = `${t.kind === 'ride' ? 'Get on the' : 'Pick up the'} ${t.name}`; }
-    else if (it?.type === 'sack') prompt = `Pick up bag (${fmt(it.s.v * sellMult())})`;
+    else if (it?.type === 'sack') prompt = S.bag < bagCap() ? `Add bag to yours (${fmt(it.s.v * sellMult())})` : `Pick up bag (${fmt(it.s.v * sellMult())})`;
     else if (onPad) prompt = 'Open shop';
     $('prompt').hidden = !prompt || shopOpen;
     if (prompt) setText('prompt', `<div class="pill"><kbd>${isTouch ? 'USE' : 'E'}</kbd> ${prompt}</div>`);
