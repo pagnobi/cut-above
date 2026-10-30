@@ -920,7 +920,7 @@ const flyGeo = new THREE.BufferGeometry(); flyGeo.setAttribute('position', new T
 const flyMat = new THREE.PointsMaterial({ color: 0xd8ff6a, size: 0.14, transparent: true, opacity: 0, blending: THREE.AdditiveBlending, depthWrite: false });
 const flies = new THREE.Points(flyGeo, flyMat); flies.frustumCulled = false; scene.add(flies);
 const flySeed = Array.from({ length: FLIES }, () => [Math.random() * 30 - 15, Math.random() * 30 - 15, 0.3 + Math.random() * 1.8, Math.random() * 6]);
-const _c1 = new THREE.Color(), _c2 = new THREE.Color(), _lightDir = new THREE.Vector3();
+const _c1 = new THREE.Color(), _c2 = new THREE.Color(), _lightDir = new THREE.Vector3(), _lx = new THREE.Vector3(), _ly = new THREE.Vector3(), _sc = new THREE.Vector3();
 let nightAmt = 0;
 function updateSky(dt) {
   if (NET.on && !NET.isHost) { /* the host's clock arrives with its presence */ }
@@ -942,7 +942,12 @@ function updateSky(dt) {
   // the light comes from the sun by day and the moon by night, never lower than ~35 degrees so grass stays readable
   _lightDir.copy(skyUni.sunDir.value).multiplyScalar(sunY > -0.04 ? 1 : -1);
   _lightDir.y = Math.max(_lightDir.y, 0.6); _lightDir.normalize();
-  sun.target.position.set(P.x, 0, P.z); sun.position.set(P.x + _lightDir.x * 90, _lightDir.y * 90, P.z + _lightDir.z * 90);
+  // the shadow box follows you in whole shadow-map texels, so shadow edges stay put instead of crawling as you move
+  _lx.crossVectors(THREE.Object3D.DEFAULT_UP, _lightDir).normalize(); _ly.crossVectors(_lightDir, _lx);
+  const texel = 80 / sun.shadow.mapSize.x, la = P.x * _lx.x + P.z * _lx.z, lb = P.x * _ly.x + P.z * _ly.z;
+  const da = Math.round(la / texel) * texel - la, db = Math.round(lb / texel) * texel - lb;
+  _sc.set(P.x, 0, P.z).addScaledVector(_lx, da).addScaledVector(_ly, db);
+  sun.target.position.copy(_sc); sun.position.copy(_sc).addScaledVector(_lightDir, 90);
   const far = camera.far;
   sky.position.copy(camera.position); sky.scale.setScalar(far * 0.93);
   for (const h of [hillsFar, hillsNear]) { h.position.set(camera.position.x, 0, camera.position.z); }
@@ -1212,7 +1217,7 @@ function buildModels() {
     for (let k = -3; k <= 3; k++) { const tooth = new THREE.Mesh(new THREE.BoxGeometry(0.012, 0.01, 0.04), steel); tooth.position.set(k * 0.02, -0.02, -0.2); g.add(tooth); }
     gloveAt(g, 0, -0.02, 0.12, 0.06);
     g.position.set(0.28, -0.3, -0.5); g.rotation.set(-0.45, 0.1, 0);
-    models.clippers = { g, anim: (t, cutting) => { comb.position.x = cutting ? Math.sin(t * 90) * 0.006 : 0; g.position.y = -0.3 + (cutting ? Math.sin(t * 70) * 0.003 : 0); } };
+    models.clippers = { g, anim: (t, cutting) => { comb.position.x = cutting ? Math.sin(t * 24) * 0.006 : 0; } };
   }
   {
     const g = new THREE.Group();
@@ -1273,7 +1278,7 @@ function buildModels() {
     g.add(rod([-0.27, 0.98, -0.32], [0.27, 0.98, -0.32], 0.022, dark));
     gloveAt(g, -0.18, 0.98, -0.32); gloveAt(g, 0.18, 0.98, -0.32);
     const body = makeBody({ hip: [0, 0.92, 0.18], lean: 0.25, hands: [[-0.18, 0.98, -0.32], [0.18, 0.98, -0.32]] }); g.add(body);
-    models[id] = { g, world: true, body, anim: (t, cutting, dt, moving) => { g.position.y = cutting ? Math.sin(t * 60) * 0.006 : 0; body.legs.forEach((l, k) => l.rotation.x = moving ? Math.sin(P.bob * 3 + k * Math.PI) * 0.45 : 0); } };
+    models[id] = { g, world: true, body, anim: (t, cutting, dt, moving) => { g.position.y = cutting ? Math.sin(t * 20) * 0.002 : 0; body.legs.forEach((l, k) => l.rotation.x = moving ? Math.sin(P.bob * 3 + k * Math.PI) * 0.45 : 0); } };
   };
   mower('push', 0xd23b2f, false);
   mower('gas', 0x2f8f3a, true);
@@ -1298,7 +1303,7 @@ function buildModels() {
       gloveAt(g, -0.14, 0.91, -0.59, 0.045); gloveAt(g, 0.14, 0.91, -0.59, 0.045);
     }
     const bodyG = makeBody({ hip: [0, 0.76, 0.2], hands, knees: [0, 0.74, -0.25], feet: [0, 0.47, -0.4] }); g.add(bodyG);
-    models[id] = { g, world: true, body: bodyG, anim: (t, cutting) => { g.position.y = Math.sin(t * (cutting ? 70 : 40)) * (cutting ? 0.008 : 0.003); } };
+    models[id] = { g, world: true, body: bodyG, anim: (t, cutting) => { g.position.y = Math.sin(t * (cutting ? 20 : 14)) * (cutting ? 0.003 : 0.0015); } };
   };
   rider('rider', 0xf2c230);
   rider('zeroturn', 0xf07a1a, { lapbars: true });
@@ -1314,7 +1319,7 @@ function buildModels() {
     const screen = new THREE.Mesh(new THREE.PlaneGeometry(0.55, 0.18), new THREE.MeshBasicMaterial({ color: 0x5ff5ff })); screen.position.set(0, 0.84, -0.54); screen.rotation.x = -0.6; g.add(screen);
     gloveAt(g, -0.3, 0.8, -0.58, 0.05); gloveAt(g, 0.3, 0.8, -0.58, 0.05);
     const bodyG = makeBody({ hip: [0, 0.62, 0.15], hands: [[-0.3, 0.8, -0.58], [0.3, 0.8, -0.58]], knees: [0, 0.6, -0.3], feet: [0, 0.5, -0.5] }); g.add(bodyG);
-    models.laser = { g, world: true, body: bodyG, anim: (t, cutting) => { g.position.y = 0.06 + Math.sin(t * 2.2) * 0.03; glowRing.material.color.setHSL((t * 0.15) % 1, 0.9, 0.62); beamMat.opacity = cutting ? 0.55 + Math.sin(t * 30) * 0.2 : 0; } };
+    models.laser = { g, world: true, body: bodyG, anim: (t, cutting) => { g.position.y = 0.06 + Math.sin(t * 2.2) * 0.03; glowRing.material.color.setHSL((t * 0.15) % 1, 0.9, 0.62); beamMat.opacity = cutting ? 0.55 + Math.sin(t * 10) * 0.12 : 0; } };
   }
 }
 buildModels();
@@ -1920,11 +1925,15 @@ addEventListener('wheel', e => {
   const owned = TOOLS.filter(t => t.pocket && S.owned[t.id]); const k = owned.findIndex(t => t.id === S.pocket);
   selectTool(owned[(k + (e.deltaY > 0 ? 1 : -1) + owned.length) % owned.length].id);
 }, { passive: true });
-function look(dx, dy) { const k = 0.0024 * settings.sens; P.yaw -= dx * k; P.pitch = Math.max(-1.45, Math.min(1.2, P.pitch - dy * k)); }
+function look(dx, dy) {
+  if (Math.abs(dx) > 300 || Math.abs(dy) > 300) return; // pointer-lock glitch, not a real flick
+  const k = 0.0024 * settings.sens; P.yaw -= dx * k; P.pitch = Math.max(-1.45, Math.min(1.2, P.pitch - dy * k)); }
 // look sensitivity (mouse and touch drag), saved per browser
 function showSens() { document.getElementById('sens').value = settings.sens; document.getElementById('sensV').textContent = settings.sens.toFixed(1) + '×'; }
 document.getElementById('sens').addEventListener('input', e => { settings.sens = +e.target.value; showSens(); saveSettings(); });
-function requestLock() { try { const p = cv.requestPointerLock(); if (p && p.catch) p.catch(() => {}); } catch (e) {} }
+function requestLock() {
+  // unadjustedMovement skips OS mouse acceleration, which also avoids Chrome's jumpy deltas; fall back where it isn't supported
+  try { const p = cv.requestPointerLock({ unadjustedMovement: true }); if (p && p.catch) p.catch(() => { try { const q = cv.requestPointerLock(); if (q && q.catch) q.catch(() => {}); } catch (e) {} }); } catch (e) { try { cv.requestPointerLock(); } catch (e2) {} } }
 document.addEventListener('pointerlockchange', () => {
   if (document.pointerLockElement) lockedOnce = true;
   else if (state === 'play' && !shopOpen && !isTouch && lockedOnce) pause();
@@ -3016,7 +3025,6 @@ function placeCamera(T, cutting) {
     _target.set(P.x + fx * ahead, 0.6, P.z + fz * ahead);
     camera.position.set(_target.x - fx * cp * dist, Math.max(0.6, _target.y - Math.sin(pitch) * dist), _target.z - fz * cp * dist);
     camera.lookAt(_target);
-    if (cutting && T.snd === 'engine') { camera.position.x += (Math.random() - .5) * 0.015; camera.position.y += (Math.random() - .5) * 0.015; }
   } else {
     camera.position.set(P.x, 1.65 + Math.sin(P.bob * 2) * 0.045, P.z);
     camera.rotation.set(P.pitch, P.yaw, 0);
