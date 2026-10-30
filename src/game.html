@@ -2089,10 +2089,10 @@ const writeLobbyLocal = (slug, o) => { try { localStorage.setItem(localLobbyKey(
 // presence for transports without a built-in one: rebroadcast ~10x a second, forget peers silent for 5 s
 function presencePump(tx, sendPres) {
   const seen = new Map();
-  tx.presence = obj => { tx._pres = obj; };
+  tx.presence = obj => { tx._pres = obj; sendPres(obj); }; // send right away; waiting for a timer only adds lag
   tx.peers = () => [...seen].map(([id, v]) => ({ id, pres: v.pres }));
   tx._seen = seen;
-  setInterval(() => { if (tx._pres) sendPres(tx._pres); const now = Date.now(); for (const [id, v] of seen) if (now - v.t > 5000) seen.delete(id); }, 100);
+  setInterval(() => { if (tx._pres) sendPres(tx._pres); const now = Date.now(); for (const [id, v] of seen) if (now - v.t > 5000) seen.delete(id); }, 1000);
   return (pres, id) => seen.set(id, { pres, t: Date.now() });
 }
 async function makeClaudeTransport(slug) {
@@ -2180,7 +2180,7 @@ async function makeP2PTransport(slug) {
     flushing = false;
   };
   setInterval(hookSockets, 400); hookSockets();
-  setInterval(flushRelay, 250);
+  setInterval(flushRelay, 150);
   const seen = presencePump(tx, pres => tx.send('pres', pres));
   return tx;
 }
@@ -2346,6 +2346,10 @@ function buildAvatarBody(tool, carrying, color) {
   castsShadow(g);
   return { g, legs: legs.length ? legs : (g.children.find(c => c.userData.body)?.legs || []) };
 }
+function predictedPos(av, pr, now) {
+  const age = Math.min(0.4, (now - (av.rxAt || now)) / 1000); // never guess more than 0.4 s ahead
+  return [pr.x + (+pr.vx || 0) * age, pr.z + (+pr.vz || 0) * age];
+}
 function updateAvatars(dt) {
   const live = new Set();
   for (const p of NET.peers) {
@@ -2362,9 +2366,14 @@ function updateAvatars(dt) {
       av.tag = nameTag(name, color); av.tag.position.y = toolDef(tool).kind === 'ride' ? 2.5 : 2.25; av.root.add(av.tag);
       av.key = key; av.color = color; av.name = name;
     }
-    const f = 1 - Math.exp(-dt * 12), dx = pr.x - av.x, dz = pr.z - av.z;
-    const moving = Math.hypot(dx, dz) > 0.05;
-    av.x += dx * f; av.z += dz * f;
+    // dead reckoning: project the last message forward by its velocity for the time since it arrived
+    const now = performance.now();
+    if (av.lastPres !== pr) { av.lastPres = pr; av.rxAt = now; }
+    const [px, pz] = predictedPos(av, pr, now);
+    const realDt = Math.min(0.25, (now - (av.drawnAt || now)) / 1000); av.drawnAt = now;
+    const f = 1 - Math.exp(-realDt * 15), dx = px - av.x, dz = pz - av.z;
+    if (Math.hypot(dx, dz) > 8) { av.x = px; av.z = pz; } else { av.x += dx * f; av.z += dz * f; } // snap after teleports
+    const moving = Math.hypot(+pr.vx || 0, +pr.vz || 0) > 0.3;
     let dy = (pr.y || 0) - av.yaw; dy = ((dy + Math.PI * 3) % (Math.PI * 2)) - Math.PI; av.yaw += dy * f;
     av.root.position.set(av.x, 0, av.z); av.root.rotation.y = av.yaw;
     av.bob = (av.bob || 0) + (moving ? dt * 9 : 0);
@@ -2419,6 +2428,16 @@ function wireNet(tx) {
   tx.on('note', d => { if (typeof d?.msg === 'string') toast(d.msg.slice(0, 80), '', 2.4); });
 }
 
+// where I am, how fast I'm moving, what I'm holding, the robots I run, and (as host) the clock.
+// Sent 20 times a second on its own timer so a slow frame rate doesn't slow everyone else's view of you.
+function sendPresence() {
+  if (!NET.on) return;
+  const pres = { n: NET.name, c: NET.color, s: NET.since, x: +P.x.toFixed(2), z: +P.z.toFixed(2), vx: +P.vx.toFixed(2), vz: +P.vz.toFixed(2), y: +P.yaw.toFixed(2), t: S.tool, k: S.carry.length };
+  if (robots.length) pres.r = robots.slice(0, 40).map(r => [ROBOTS.indexOf(r.model), Math.round(r.x * 10), Math.round(r.z * 10), Math.round(r.h * 100)]);
+  if (NET.isHost) pres.d = +S.dayT.toFixed(4);
+  NET.tx.presence(pres);
+}
+setInterval(sendPresence, 50);
 function netTick(dt) {
   if (!NET.on) return;
   NET.peers = NET.tx.peers().filter(p => p.pres && typeof p.pres === 'object');
@@ -2435,14 +2454,6 @@ function netTick(dt) {
   NET.wantTimer -= dt;
   if (!NET.isHost && !NET.gotSnap && NET.wantTimer <= 0) { NET.wantTimer = 3; netSend('want', { to: hostId }); }
   // my presence: where I am, what I'm holding, the robots I run, and (as host) the clock
-  NET.presTimer -= dt;
-  if (NET.presTimer <= 0) {
-    NET.presTimer = 0.1;
-    const pres = { n: NET.name, c: NET.color, s: NET.since, x: +P.x.toFixed(2), z: +P.z.toFixed(2), y: +P.yaw.toFixed(2), t: S.tool, k: S.carry.length };
-    if (robots.length) pres.r = robots.slice(0, 40).map(r => [ROBOTS.indexOf(r.model), Math.round(r.x * 10), Math.round(r.z * 10), Math.round(r.h * 100)]);
-    if (NET.isHost) pres.d = +S.dayT.toFixed(4);
-    NET.tx.presence(pres);
-  }
   // grass I (or my robots) cut, in batches
   NET.cutTimer -= dt;
   if (NET.cutTimer <= 0 && NET.outCuts.length) {
@@ -2789,5 +2800,5 @@ function start(data) {
 }
 window.claude?.hot?.snapshot?.(() => { S.cutBits = encodeCut(); S.gridSig = gridSig; return { save: S }; });
 window.claude?.hot?.ready ? window.claude.hot.ready(start) : start(window.claude?.hot?.data ?? {});
-window.__game = { NET, hostLobby, joinLobby, robots, get S() { return S; }, P, get state() { return state; }, keys, setMouse: v => mouseDown = v, cutAt, TIERS, tierCount, cutCount, ZONE_NEED, save, findTarget, settings, applyQuality, triCount, fpsMon, syncTool, spawnToolMesh, useAction, putDown, dropBag, selectTool, addRobot };
+window.__game = { NET, avatars, predictedPos, hostLobby, joinLobby, robots, get S() { return S; }, P, get state() { return state; }, keys, setMouse: v => mouseDown = v, cutAt, TIERS, tierCount, cutCount, ZONE_NEED, save, findTarget, settings, applyQuality, triCount, fpsMon, syncTool, spawnToolMesh, useAction, putDown, dropBag, selectTool, addRobot };
 </script>
