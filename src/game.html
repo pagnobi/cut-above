@@ -145,6 +145,15 @@ body { background: #0f1a0d; color: var(--ink); font-family: var(--body); font-si
 .pauseTabs { border-bottom: 1px solid var(--line); padding-bottom: 12px; }
 .pane { display: grid; gap: 14px; min-height: 220px; align-content: start; }
 .paneHint { font-size: 14px !important; }
+.saveBox { display: grid; gap: 8px; }
+.saveBox .codeBox { gap: 8px; }
+.saveBox .btn.ghost { padding: 10px 14px; }
+.saveCodeBox { display: grid; gap: 8px; }
+.saveCode { width: 100%; box-sizing: border-box; resize: vertical; font: 12px/1.4 ui-monospace, monospace; color: var(--ink); background: rgba(0,0,0,.35); border: 1px solid var(--line); border-radius: 8px; padding: 8px; word-break: break-all; }
+.saveMsg { margin: 0; }
+.saveMsg.err { color: var(--stop); }
+.saveMsg:empty { display: none; }
+.saveConfirm { justify-self: start; }
 #shopList { overflow-y: auto; display: grid; gap: 8px; padding-right: 4px; min-height: 0; }
 .item { display: grid; grid-template-columns: 52px 1fr auto; gap: 14px; align-items: center; padding: 12px; border-radius: 10px; background: rgba(255,255,255,.035); border: 1px solid var(--line); }
 .item .ico { width: 52px; height: 52px; border-radius: 8px; display: grid; place-items: center; background: rgba(0,0,0,.3); }
@@ -251,7 +260,13 @@ body { background: #0f1a0d; color: var(--ink); font-family: var(--body); font-si
       <button class="btn alt" id="mpJoin">Join</button>
     </div>
     <span id="mpStatus" role="status"></span>
+    <div class="saveBox menuSave"><p class="sectionLabel">Have a save from another computer?</p>
+      <div class="codeBox"><button class="btn ghost" data-load="file">Load save file</button><button class="btn ghost" data-load="code">Paste save code</button></div>
+      <div class="saveCodeBox" hidden><textarea class="saveCode" rows="3" spellcheck="false" autocomplete="off" aria-label="Save code"></textarea><button class="btn alt saveCodeGo">Load this code</button></div>
+      <p class="paneHint saveMsg" role="status"></p>
+      <button class="btn alt saveConfirm" hidden>Replace my game</button></div>
     <p class="mpHint">Controls are in the Esc menu once you're playing.</p>
+    <input type="file" id="saveFile" accept=".json,application/json,text/plain" hidden>
   </div>
 </div>
 
@@ -283,6 +298,11 @@ body { background: #0f1a0d; color: var(--ink); font-family: var(--body); font-si
     </div>
     <div class="pane" role="tabpanel" id="ppane-progress" aria-labelledby="ptab-progress">
       <div id="mpPanel" hidden><p class="sectionLabel" id="mpPanelTitle">Lobby</p><div class="codeBox"><span id="mpCode"></span><button class="btn ghost" id="mpCopy">Copy code</button><span id="mpCopied" role="status"></span></div><div class="players" id="mpPlayers"></div></div>
+      <div class="saveBox" id="savePanel"><p class="sectionLabel">Save file</p>
+      <div class="codeBox"><button class="btn ghost" data-save="file">Download save</button><button class="btn ghost" data-save="code">Copy save code</button><button class="btn ghost" data-load="file">Load save file</button><button class="btn ghost" data-load="code">Paste save code</button></div>
+      <div class="saveCodeBox" hidden><textarea class="saveCode" rows="3" spellcheck="false" autocomplete="off" aria-label="Save code"></textarea><button class="btn alt saveCodeGo">Load this code</button></div>
+      <p class="paneHint saveMsg" role="status">Your game autosaves in this browser. Download a copy or copy a save code to back it up or move it to another computer.</p>
+      <button class="btn alt saveConfirm" hidden>Replace my game</button></div>
       <p id="pauseStats"></p>
       <table class="zones num" id="zoneTable"></table>
       <p class="sectionLabel">Trophies</p>
@@ -1887,7 +1907,7 @@ function renderGraphicsRow() {
 }
 
 addEventListener('keydown', e => {
-  if (e.target.closest?.('input:not([type=range])')) return; // typing a name or code isn't playing
+  if (e.target.closest?.('input:not([type=range]), textarea')) return; // typing a name or code isn't playing
   keys.add(e.code);
   if (e.code === 'Tab') { e.preventDefault(); if (state === 'play' && !shopOpen) { if (document.pointerLockElement) document.exitPointerLock(); pause(); } else if (state === 'paused') startPlaying(); return; }
   if (e.code === 'KeyM' && !e.repeat) { toggleMute(); return; } // works in menus too
@@ -2573,7 +2593,7 @@ function lobbyText() {
   return `${NET.coop ? 'co-op, one shared wallet' : 'shared map, own wallets'} · ${who}`;
 }
 function renderPlayers() {
-  $('mpPanel').hidden = !NET.on; $('mpLeave').hidden = !NET.on; $('mpClose').hidden = !(NET.on && NET.isHost); $('menuBtn').hidden = NET.on;
+  $('mpPanel').hidden = !NET.on; $('mpLeave').hidden = !NET.on; $('mpClose').hidden = !(NET.on && NET.isHost); $('menuBtn').hidden = NET.on; $('savePanel').hidden = NET.on;
   if (!NET.on) return;
   $('mpPanelTitle').textContent = `Lobby code · ${lobbyText()}`;
   $('mpCode').textContent = NET.lobby;
@@ -2925,6 +2945,7 @@ function leaveLobby(note) {
 {
   // why the last lobby ended, if it was the host's doing
   try { const n = sessionStorage.getItem('cutabove_note'); if (n) { sessionStorage.removeItem('cutabove_note'); setTimeout(() => mpStatus(n, true), 0); } } catch (e) {}
+  try { const n = sessionStorage.getItem('cutabove_note_ok'); if (n) { sessionStorage.removeItem('cutabove_note_ok'); setTimeout(() => mpStatus(n), 0); } } catch (e) {}
   const nameIn = $('mpName'), codeIn = $('mpCodeIn');
   nameIn.value = settings.name || '';
   const resume = $('mpResume');
@@ -3130,7 +3151,14 @@ function frame(now) {
 }
 
 // ===================== FLOW =====================
+// ask the browser not to clear the game's storage when space runs low (once; some browsers ask the player)
+function keepStorage() {
+  if (settings.persistAsked || !navigator.storage?.persist) return;
+  settings.persistAsked = true; saveSettings();
+  navigator.storage.persisted().then(p => p || navigator.storage.persist()).catch(() => {});
+}
 function startPlaying() {
+  keepStorage();
   initAudio();
   $('startScreen').hidden = true; $('pauseScreen').hidden = true; $('winScreen').hidden = true;
   state = 'play';
@@ -3194,8 +3222,81 @@ $('resetBtn').addEventListener('click', () => {
   regrowAll(); rebuildDepots(); syncTool(); resetArmed = false; $('resetBtn').textContent = 'Reset progress';
   P.x = 0; P.z = 3; save(); startPlaying();
 });
+// ---- save files and save codes: back up the solo game, or carry it to another browser or computer ----
+const SAVE_TAG = 'cut-above-save', CODE_PREFIX = 'CUTABOVE1:';
+function exportSave() { if (state !== 'start') save(); return { game: SAVE_TAG, v: 3, savedAt: new Date().toISOString(), save: S }; }
+const allCells = () => tierCount.reduce((a, b) => a + b, 0);
+const saveSummary = s => { const pct = Math.min(100, (s.stats?.cut || 0) / allCells() * 100); return `${fmt(+s.money || 0)} · ${pct.toFixed(pct < 1 ? 2 : 1)}% mowed`; };
+function saveMsg(box, msg, err) { const m = box.querySelector('.saveMsg'); m.textContent = msg; m.classList.toggle('err', !!err); }
+function codeBox(box, mode, code = '') {
+  const cb = box.querySelector('.saveCodeBox'), ta = cb.querySelector('textarea');
+  cb.hidden = !mode; ta.value = code; ta.readOnly = mode === 'show'; cb.querySelector('.saveCodeGo').hidden = mode !== 'paste';
+  if (mode) { ta.focus(); if (mode === 'show') ta.select(); }
+}
+async function downloadSave(box) {
+  const text = JSON.stringify(exportSave()), name = `cut-above-save-${new Date().toISOString().slice(0, 10)}.json`;
+  if (window.claude?.use) {
+    // claude.ai pages hand files over through the viewer, who confirms the download
+    const dl = await window.claude.use('downloads');
+    if (!dl) return saveMsg(box, 'Downloads aren\'t available here. Use Copy save code instead.', true);
+    try { await dl.save({ filename: name, data: text }); saveMsg(box, `Downloaded ${name}.`); }
+    catch (e) { e?.code === 'declined' ? saveMsg(box, 'Download cancelled.') : saveMsg(box, 'Couldn\'t download here. Use Copy save code instead.', true); }
+    return;
+  }
+  const a = document.createElement('a'); a.href = URL.createObjectURL(new Blob([text], { type: 'application/json' })); a.download = name;
+  document.body.appendChild(a); a.click(); a.remove(); setTimeout(() => URL.revokeObjectURL(a.href), 10000);
+  saveMsg(box, `Downloaded ${name}. Keep it somewhere safe.`);
+}
+async function copySaveCode(box) {
+  const packed = await pipeBytes(new TextEncoder().encode(JSON.stringify(exportSave())), new CompressionStream('deflate-raw'));
+  const code = CODE_PREFIX + toB64(packed);
+  try { await navigator.clipboard.writeText(code); codeBox(box, null); saveMsg(box, `Save code copied (${Math.ceil(code.length / 1024)} KB of text). Paste it into a note or a message to keep it.`); }
+  catch (e) { codeBox(box, 'show', code); saveMsg(box, 'Copy the code below (Ctrl+C) and keep it somewhere safe.'); }
+}
+async function readSaveText(text) {
+  text = text.trim();
+  if (text.startsWith(CODE_PREFIX)) text = new TextDecoder().decode(await pipeBytes(fromB64(text.slice(CODE_PREFIX.length).replace(/\s+/g, '')), new DecompressionStream('deflate-raw')));
+  const o = JSON.parse(text), s = o?.game === SAVE_TAG ? o.save : null;
+  if (!s || typeof s !== 'object' || !isFinite(s.money) || typeof s.owned !== 'object') throw new Error('not a save');
+  return s;
+}
+async function offerSave(box, text) {
+  let s;
+  try { s = await readSaveText(text); } catch (e) { return saveMsg(box, 'That isn\'t a Cut Above save file or code.', true); }
+  box._pending = s; codeBox(box, null);
+  const confirm = box.querySelector('.saveConfirm');
+  // nothing to lose: load straight away
+  if (!(S.stats.cut > 0 || S.money > 0)) return applySave(box);
+  saveMsg(box, `This replaces your solo game (${saveSummary(S)}) with the save (${saveSummary(s)}).`);
+  confirm.hidden = false;
+}
+function applySave(box) {
+  try { localStorage.setItem(SAVE_KEY, JSON.stringify(box._pending)); }
+  catch (e) { return saveMsg(box, 'Your browser won\'t let the game store saves (private window or blocked site data).', true); }
+  try { sessionStorage.setItem('cutabove_note_ok', 'Save loaded · press Play solo to carry on'); } catch (e) {}
+  location.reload();
+}
+let loadBox = null;
+for (const box of document.querySelectorAll('.saveBox')) {
+  box.addEventListener('click', e => {
+    const b = e.target.closest('button'); if (!b) return;
+    if (!b.classList.contains('saveConfirm')) box.querySelector('.saveConfirm').hidden = true;
+    if (b.dataset.save === 'file') downloadSave(box);
+    else if (b.dataset.save === 'code') copySaveCode(box);
+    else if (b.dataset.load === 'file') { loadBox = box; $('saveFile').value = ''; $('saveFile').click(); }
+    else if (b.dataset.load === 'code') { codeBox(box, 'paste'); saveMsg(box, 'Paste a save code, then press Load this code.'); }
+    else if (b.classList.contains('saveCodeGo')) offerSave(box, box.querySelector('.saveCode').value);
+    else if (b.classList.contains('saveConfirm')) applySave(box);
+  });
+}
+$('saveFile').addEventListener('change', async e => {
+  const f = e.target.files[0]; if (!f || !loadBox) return;
+  if (f.size > 20e6) return saveMsg(loadBox, 'That file is too big to be a Cut Above save.', true);
+  offerSave(loadBox, await f.text());
+});
+
 addEventListener('keydown', e => {
-  if (e.target.closest?.('input:not([type=range])')) return; // typing a name or code isn't playing
+  if (e.target.closest?.('input:not([type=range]), textarea')) return; // typing a name or code isn't playing
   if (!$('roomScreen').hidden) return; // waiting in the lobby room
   if (e.code === 'Escape' && shopOpen) closeShop();
   else if (e.code === 'Escape' && state === 'play') { if (document.pointerLockElement) document.exitPointerLock(); pause(); }
