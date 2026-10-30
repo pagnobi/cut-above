@@ -456,10 +456,13 @@ const sellMult = () => 1 + 0.2 * S.up.buyer;
 const powerMult = () => 1 + 0.15 * S.up.blades;
 const widthMult = () => 1 + 0.08 * S.up.deck;
 const tuneMult = () => 1 + 0.25 * S.up.tune;
-const fmt = n => { n = Math.floor(n); if (n >= 1e6) return '$' + (n / 1e6).toFixed(n >= 1e7 ? 1 : 2) + 'M'; return '$' + n.toLocaleString('en-US'); };
+// money shows cents below $10,000 (prices are whole dollars, so they stay clean); bigger sums round to dollars, then millions
+const fmt = n => {
+  if (n >= 1e6) return '$' + (Math.floor(n / 1e4) / 100).toFixed(n >= 1e7 ? 1 : 2) + 'M';
+  if (n >= 1e4 || Number.isInteger(n)) return '$' + Math.floor(n).toLocaleString('en-US');
+  return '$' + (Math.floor(n * 100) / 100).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+};
 const carryValue = () => S.carry.reduce((a, s) => a + s.v, 0);
-// a drop-off only buys a load (your bag plus any bags in your arms) worth more than this
-const MIN_SALE = 1;
 const loadValue = () => (S.bagValue + carryValue()) * sellMult();
 
 // ===================== RNG / ZONES =====================
@@ -2640,7 +2643,6 @@ function frame(now) {
     const full = S.bag >= bagCap();
     const nd = nearDepot(), onPad = nd.dist < 3.2;
     if (onPad && S.held && (S.bag || S.carry.length)) setStatus(`Put down the ${toolDef(S.held).name} (G) to cash in`, 'warn');
-    else if (onPad && (S.bag || S.carry.length) && loadValue() <= MIN_SALE) setStatus(`The drop-off only buys loads worth more than ${fmt(MIN_SALE)} · yours is worth $${loadValue().toFixed(2)}`, 'warn');
     else if (handsFull) setStatus(`Carrying ${S.carry.length} bag${S.carry.length > 1 ? 's' : ''} · walk onto a drop-off pad, or G to set them down`, '');
     else if (full) setStatus(S.held ? `Bag full · B to drop it here, or put down the ${toolDef(S.held).name} (G) and carry it in` : 'Bag full · B to drop it here, or walk it to a drop-off', 'stop');
     else if (res.tough && !res.any) {
@@ -2652,7 +2654,7 @@ function frame(now) {
     if ((T.snd === 'snip' || T.snd === 'swish') && cutting) { snipPhase += dt * (T.id === 'scissors' ? 14 : T.id === 'scythe' ? 12 : 9) / Math.PI; if (snipPhase >= 1) { snipPhase -= 1; T.snd === 'snip' ? snipSound() : swishSound(); } }
     // cashing in: your hands must be free of big gear
     sellCooldown -= dt;
-    if (onPad && !S.held && (S.bag > 0 || S.carry.length) && sellCooldown <= 0 && loadValue() > MIN_SALE) {
+    if (onPad && !S.held && (S.bag > 0 || S.carry.length) && sellCooldown <= 0) {
       const v = loadValue();
       earn(v); S.bag = 0; S.bagValue = 0; S.carry = []; sellCooldown = 0.5;
       sellSound(); floaty('+' + fmt(v)); unlock('first_sale'); syncTool(); save();
