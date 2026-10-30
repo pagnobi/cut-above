@@ -57,7 +57,6 @@ body { background: #0f1a0d; color: var(--ink); font-family: var(--body); font-si
 .slot .key { position: absolute; top: 2px; left: 5px; font-family: var(--display); font-size: 11px; color: var(--ink-dim); }
 .slot .tier { position: absolute; bottom: 3px; right: 4px; font-size: 10px; font-family: var(--display); }
 .slot .dist { position: absolute; bottom: 2px; left: 4px; font-size: 10px; font-weight: 700; color: var(--ink-dim); }
-.slot.locked { opacity: .35; }
 .slot.active { border-color: var(--safety); box-shadow: 0 0 0 2px rgba(255,207,51,.35); }
 .slot.away { border-style: dashed; }
 .slot svg { width: 30px; height: 30px; }
@@ -173,7 +172,6 @@ body { background: #0f1a0d; color: var(--ink); font-family: var(--body); font-si
 @media (max-width: 900px) {
   .slot { width: 44px; height: 48px; }
   .slot svg { width: 24px; height: 24px; }
-  .slot.locked { display: none; }
 }
 @media (max-width: 700px) {
   #money { font-size: 26px; }
@@ -237,7 +235,7 @@ body { background: #0f1a0d; color: var(--ink); font-family: var(--body); font-si
       <kbd>E</kbd><span>Pick up tools and bags, get on mowers, open the shop on a pad</span>
       <kbd>G</kbd><span>Put down what you're holding</span>
       <kbd>B</kbd><span>Drop your bag here and start a fresh one</span>
-      <kbd>1-0 - =</kbd><span>Switch pocket tools, or find big gear you left behind</span>
+      <kbd>1, 2, 3…</kbd><span>Switch pocket tools, or find big gear you left behind</span>
       <kbd>Tab</kbd><span>Zone progress, trophies, graphics</span>
     </div>
     <div class="row"><button class="btn" id="startBtn">Play solo</button></div>
@@ -282,7 +280,7 @@ body { background: #0f1a0d; color: var(--ink); font-family: var(--body); font-si
       <kbd>E</kbd><span>Pick up tools and bags, get on mowers, open the shop on a pad</span>
       <kbd>G</kbd><span>Put down what you're holding</span>
       <kbd>B</kbd><span>Drop your bag here and start a fresh one</span>
-      <kbd>1-0 - =</kbd><span>Switch pocket tools (or scroll), or find big gear you left behind</span>
+      <kbd>1, 2, 3…</kbd><span>Switch tools in your hotbar (or scroll), or find big gear you left behind</span>
       <kbd>Esc / Tab</kbd><span>This menu</span>
       <kbd>M</kbd><span>Mute</span>
     </div>
@@ -1697,7 +1695,7 @@ addEventListener('keydown', e => {
   if (e.code === 'KeyE') { if (shopOpen) closeShop(); else useAction(); }
   if (shopOpen) return;
   const hk = HOTKEYS.indexOf(e.code);
-  if (hk >= 0) selectTool(TOOLS[hk].id);
+  if (hk >= 0 && hotbarTools()[hk]) selectTool(hotbarTools()[hk].id);
   if (e.code === 'KeyG') putDown();
   if (e.code === 'KeyB') dropBag();
   if (e.code === 'KeyF') cutToggle = !cutToggle;
@@ -1865,10 +1863,12 @@ const ICONS = {
 ['r2:#ffb020', 'r3:#ff4f8b', 'r4:#b98bff'].forEach(s => { const [k, c] = s.split(':'); ICONS[k] = ICONS.r1.replace('#4aa3ff', c); });
 const icon = id => `<svg viewBox="0 0 32 32" aria-hidden="true">${ICONS[id] || ''}</svg>`;
 function toolDist(id) { const a = S.toolAt[id]; return a ? Math.hypot(a.x - P.x, a.z - P.z) : 0; }
+// the hotbar holds only tools you own, numbered 1, 2, 3… in tier order
+const hotbarTools = () => TOOLS.filter(t => S.owned[t.id]);
 function buildHotbar() {
-  const html = TOOLS.map((t, k) => {
-    const own = S.owned[t.id], active = S.tool === t.id && !S.carry.length, away = own && !t.pocket && S.held !== t.id;
-    return `<div class="slot ${own ? '' : 'locked'} ${active ? 'active' : ''} ${away ? 'away' : ''}" title="${t.name}"><span class="key">${HOTLABELS[k]}</span>${icon(t.id)}${away ? `<span class="dist">${Math.round(toolDist(t.id))}m</span>` : ''}<span class="tier" style="color:${TIERS[t.tier].color}">T${t.tier}</span></div>`;
+  const html = hotbarTools().map((t, k) => {
+    const active = S.tool === t.id && !S.carry.length, away = !t.pocket && S.held !== t.id;
+    return `<div class="slot ${active ? 'active' : ''} ${away ? 'away' : ''}" title="${t.name}"><span class="key">${HOTLABELS[k]}</span>${icon(t.id)}${away ? `<span class="dist">${Math.round(toolDist(t.id))}m</span>` : ''}<span class="tier" style="color:${TIERS[t.tier].color}">T${t.tier}</span></div>`;
   }).join('');
   setText('hotbar', html);
 }
