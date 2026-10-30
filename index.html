@@ -2069,7 +2069,7 @@ function findHunt() {
 // `?net=local` links tabs in one browser together (for testing).
 // The oldest player in the lobby is the host: in co-op it owns the shared wallet and runs the robots.
 const NET = { on: false, lobby: '', mode: 'coop', coop: false, isHost: true, selfId: '', hostId: '', since: 0, name: '', color: 0, tx: null,
-  peers: [], known: new Set(), outCuts: [], cutTimer: 0, presTimer: 0, econKey: '', econAt: 0, econBeat: 0, persistTimer: 8, persisting: false, snapIn: new Map(), reqSeq: 0, pending: new Map() };
+  peers: [], known: new Set(), gotSnap: false, wantTimer: 0, snapSentAt: new Map(), outCuts: [], cutTimer: 0, presTimer: 0, econKey: '', econAt: 0, econBeat: 0, persistTimer: 8, persisting: false, snapIn: new Map(), reqSeq: 0, pending: new Map() };
 const PLAYER_COLORS = [0xe8742c, 0x3f8fe0, 0xd04a8a, 0x2fb07a, 0xf2c230, 0x9a6ae0, 0xe04a4a, 0x40c8d0];
 const lobbySlug = s => s.toLowerCase().trim().replace(/[^a-z0-9_.-]+/g, '-').replace(/^[^a-z0-9]+/, '').slice(0, 40) || 'lobby';
 const colorFor = id => { let h = 0; for (const ch of id) h = (h * 31 + ch.charCodeAt(0)) >>> 0; return h % PLAYER_COLORS.length; };
@@ -2111,20 +2111,71 @@ async function makeClaudeTransport(slug) {
 async function makeP2PTransport(slug) {
   let mod;
   try { mod = await import('https://cdn.jsdelivr.net/npm/trystero@0.26.0/+esm'); } catch (e) { return null; }
-  const room = mod.joinRoom({ appId: 'cut-above-lawn-game-v1' }, 'ca-' + slug);
-  const acts = {}, handlers = {};
-  const act = topic => {
-    if (!acts[topic]) { acts[topic] = room.makeAction(topic); acts[topic].onMessage = (data, meta) => (handlers[topic] || []).forEach(fn => fn(data, meta?.peerId ?? meta)); }
-    return acts[topic];
-  };
-  const tx = { kind: 'p2p', selfId: mod.selfId,
-    send: (topic, data) => act(topic).send(data),
-    on: (topic, fn) => { act(topic); (handlers[topic] ||= []).push(fn); },
+  // Players try a direct WebRTC link; when two of them can't get one (common between home and mobile
+  // networks), their messages also travel through the same public Nostr relays used to find each other.
+  // Every message carries (sender, sequence) so one that arrives both ways is applied once.
+  const appId = 'cut-above-lawn-game-v1', forceRelay = new URLSearchParams(location.search).get('p2p') === 'relay';
+  const room = mod.joinRoom({ appId }, 'ca-' + slug), selfId = mod.selfId;
+  const handlers = {}, direct = new Set(), seenSeq = new Map();
+  let seq = 0, outbox = [], lastBeacon = 0;
+  const tx = { kind: 'p2p', selfId,
+    on: (topic, fn) => { (handlers[topic] ||= []).push(fn); },
     leave: () => room.leave(),
-    loadSnap: async () => readLobbyLocal(slug), saveSnap: async o => writeLobbyLocal(slug, o) };
-  const seen = presencePump(tx, pres => act('pres').send(pres));
-  tx.on('pres', (d, id) => seen(d, id));
-  room.onPeerLeave = id => tx._seen.delete(id);
+    loadSnap: async () => readLobbyLocal(slug), saveSnap: async o => writeLobbyLocal(slug, o),
+    links: () => ({ direct: direct.size, relayed: tx.peers().filter(p => !direct.has(p.id)).length }) };
+  const dispatch = m => {
+    if (!m || typeof m !== 'object' || m.f === selfId || typeof m.t !== 'string') return;
+    let ring = seenSeq.get(m.f);
+    if (!ring) seenSeq.set(m.f, ring = new Set());
+    if (ring.has(m.q)) return;
+    ring.add(m.q);
+    if (ring.size > 4000) { const it = ring.values(); for (let k = 0; k < 2000; k++) ring.delete(it.next().value); }
+    if (m.t === 'pres') seen(m.d, m.f); else (handlers[m.t] || []).forEach(fn => fn(m.d, m.f));
+  };
+  const msg = room.makeAction('m');
+  msg.onMessage = data => dispatch(data);
+  room.onPeerJoin = id => direct.add(id);
+  room.onPeerLeave = id => { direct.delete(id); };
+  const needRelay = () => forceRelay || tx.peers().some(p => !direct.has(p.id));
+  tx.send = (topic, data) => {
+    const m = { f: selfId, q: ++seq, t: topic, d: data };
+    if (!forceRelay && direct.size) msg.send(m);
+    if (topic === 'pres') {
+      // over the relays only the newest presence matters, plus a slow beacon so stranded players find each other
+      const now = Date.now();
+      if (!needRelay() && now - lastBeacon < 1500) return;
+      lastBeacon = now; outbox = outbox.filter(o => o.t !== 'pres');
+      outbox.push(m);
+    } else if (needRelay()) outbox.push(m);
+  };
+  // relay plumbing: subscribe on every open relay socket, publish batched events ~4 times a second
+  const relayTopic = appId + ':relay:ca-' + slug, subId = 'ca' + Math.random().toString(36).slice(2, 10), hooked = new WeakSet();
+  const hookSockets = () => {
+    for (const ws of Object.values(mod.getRelaySockets())) {
+      if (ws.readyState !== 1 || hooked.has(ws)) continue;
+      hooked.add(ws);
+      ws.send(mod.subscribe(subId, relayTopic));
+      ws.addEventListener('message', e => {
+        try { const r = JSON.parse(e.data); if (r[0] === 'EVENT' && r[1] === subId) { const batch = JSON.parse(r[2].content); if (Array.isArray(batch)) batch.forEach(dispatch); } } catch (err) {}
+      });
+    }
+  };
+  let flushing = false;
+  const flushRelay = async () => {
+    if (flushing || !outbox.length) return;
+    flushing = true;
+    try {
+      hookSockets();
+      let batch = [], size = 0;
+      while (outbox.length && size < 40000) { const m = outbox.shift(), len = JSON.stringify(m).length; batch.push(m); size += len; }
+      const ev = await mod.createEvent(relayTopic, JSON.stringify(batch));
+      for (const ws of Object.values(mod.getRelaySockets())) if (ws.readyState === 1) try { ws.send(ev); } catch (e) {}
+    } catch (e) {}
+    flushing = false;
+  };
+  setInterval(hookSockets, 400); hookSockets();
+  setInterval(flushRelay, 250);
+  const seen = presencePump(tx, pres => tx.send('pres', pres));
   return tx;
 }
 function makeLocalTransport(slug) {
@@ -2224,6 +2275,8 @@ async function applySnap(sn, fromHost) {
   }
 }
 async function sendSnapTo(peer) {
+  if (Date.now() - (NET.snapSentAt.get(peer) || 0) < 2500) return;
+  NET.snapSentAt.set(peer, Date.now());
   const json = JSON.stringify(await buildSnap()), sid = Math.random().toString(36).slice(2, 8), size = 3000, n = Math.ceil(json.length / size);
   for (let i = 0; i < n; i++) {
     netSend('snap', { to: peer, sid, i, n, d: json.slice(i * size, (i + 1) * size) });
@@ -2239,7 +2292,9 @@ async function persistLobby() {
 function setMode(m) { NET.mode = m; NET.coop = m === 'coop'; }
 function lobbyText() {
   const n = NET.peers.length + 1;
-  return `Lobby ${NET.lobby} · ${NET.coop ? 'Co-op' : 'Own wallets'} · ${n} player${n > 1 ? 's' : ''}${NET.isHost ? ' · you host' : ''}`;
+  const links = NET.tx?.links?.(), via = links?.relayed ? ` · ${links.relayed} via relay` : '';
+  if (n === 1) return `Lobby ${NET.lobby} · ${NET.coop ? 'Co-op' : 'Own wallets'} · waiting for players to join`;
+  return `Lobby ${NET.lobby} · ${NET.coop ? 'Co-op' : 'Own wallets'} · ${n} players${via}${NET.isHost ? ' · you host' : ''}`;
 }
 function renderPlayers() {
   $('mpPanel').hidden = !NET.on; $('mpLeave').hidden = !NET.on;
@@ -2329,8 +2384,9 @@ function wireNet(tx) {
     let e = NET.snapIn.get(d.sid);
     if (!e) { e = { parts: [], got: 0, n: d.n }; NET.snapIn.set(d.sid, e); }
     if (e.parts[d.i] === undefined) { e.parts[d.i] = d.d; e.got++; }
-    if (e.got === e.n) { NET.snapIn.delete(d.sid); try { applySnap(JSON.parse(e.parts.join('')), true); } catch (err) {} }
+    if (e.got === e.n) { NET.snapIn.delete(d.sid); try { NET.gotSnap = true; applySnap(JSON.parse(e.parts.join('')), true); } catch (err) {} }
   });
+  tx.on('want', (d, from) => { if (NET.isHost && d?.to === NET.selfId) sendSnapTo(from); });
   tx.on('econ', (d, from) => { if (NET.coop && !NET.isHost && from === NET.hostId) applyEcon(d); });
   tx.on('req', (d, from) => {
     if (!NET.isHost || !NET.coop || !d || (d.to && d.to !== NET.selfId)) return;
@@ -2368,6 +2424,9 @@ function netTick(dt) {
   if (!NET.isHost) { const hp = NET.peers.find(p => p.id === hostId); if (typeof hp?.pres?.d === 'number') S.dayT = hp.pres.d % 1; }
   // the host hands every newcomer the lobby as it stands
   for (const p of NET.peers) if (!NET.known.has(p.id)) { NET.known.add(p.id); if (NET.isHost) sendSnapTo(p.id); }
+  // a newcomer keeps asking the host for the lobby until a copy arrives (the first one can be lost while links come up)
+  NET.wantTimer -= dt;
+  if (!NET.isHost && !NET.gotSnap && NET.wantTimer <= 0) { NET.wantTimer = 3; netSend('want', { to: hostId }); }
   // my presence: where I am, what I'm holding, the robots I run, and (as host) the clock
   NET.presTimer -= dt;
   if (NET.presTimer <= 0) {
