@@ -293,6 +293,9 @@ body { background: #0f1a0d; color: var(--ink); font-family: var(--body); font-si
       <div class="row"><button class="btn ghost" id="muteBtn">Mute all (M)</button></div>
     </div>
     <div class="pane" role="tabpanel" id="ppane-controls" aria-labelledby="ptab-controls" hidden>
+      <div class="vols">
+        <label for="sens">Mouse sensitivity</label><input type="range" id="sens" min="0.2" max="3" step="0.1"><output id="sensV" for="sens"></output>
+      </div>
       <div class="keys" id="pauseKeys">
         <kbd>WASD</kbd><span>Walk (Shift to sprint)</span>
         <kbd>Mouse</kbd><span>Look around</span>
@@ -1821,7 +1824,7 @@ const QUALITY = {
   low:    { label: 'Low',    near: 0.32, far: 0.16, lod: 14, cull: 56, fog: [16, 52], pr: 0.75, shadows: 0 },
 };
 const SETTINGS_KEY = 'cutabove_settings';
-const settings = { quality: 'auto', auto: isTouch ? 'medium' : 'high', fps: false, daynight: true, vol: { master: 80, sfx: 80, music: 50 } };
+const settings = { quality: 'auto', auto: isTouch ? 'medium' : 'high', fps: false, daynight: true, vol: { master: 80, sfx: 80, music: 50 }, sens: 1 };
 try { Object.assign(settings, JSON.parse(localStorage.getItem(SETTINGS_KEY)) || {}); } catch (e) {}
 const saveSettings = () => { try { localStorage.setItem(SETTINGS_KEY, JSON.stringify(settings)); } catch (e) {} };
 const activeLevel = () => settings.quality === 'auto' ? settings.auto : settings.quality;
@@ -1896,7 +1899,10 @@ addEventListener('wheel', e => {
   const owned = TOOLS.filter(t => t.pocket && S.owned[t.id]); const k = owned.findIndex(t => t.id === S.pocket);
   selectTool(owned[(k + (e.deltaY > 0 ? 1 : -1) + owned.length) % owned.length].id);
 }, { passive: true });
-function look(dx, dy) { P.yaw -= dx * 0.0024; P.pitch = Math.max(-1.45, Math.min(1.2, P.pitch - dy * 0.0024)); }
+function look(dx, dy) { const k = 0.0024 * settings.sens; P.yaw -= dx * k; P.pitch = Math.max(-1.45, Math.min(1.2, P.pitch - dy * k)); }
+// look sensitivity (mouse and touch drag), saved per browser
+function showSens() { document.getElementById('sens').value = settings.sens; document.getElementById('sensV').textContent = settings.sens.toFixed(1) + '×'; }
+document.getElementById('sens').addEventListener('input', e => { settings.sens = +e.target.value; showSens(); saveSettings(); });
 function requestLock() { try { const p = cv.requestPointerLock(); if (p && p.catch) p.catch(() => {}); } catch (e) {} }
 document.addEventListener('pointerlockchange', () => {
   if (document.pointerLockElement) lockedOnce = true;
@@ -2934,7 +2940,7 @@ function pause() {
     return `<tr><td><span class="chip" style="display:inline-flex;gap:6px;align-items:center"><span class="swatch" style="background:${TIERS[t].color}"></span>${TIERS[t].zone}</span></td><td class="r">${Math.round(TIERS[t].area).toLocaleString('en-US')} m²</td><td class="r">${p >= 1 ? '✓ 100' : (p * 100).toFixed(1)}%</td><td class="r">${fmtRate(TIERS[t].perM2)}</td><td class="r">${fmt(TIERS[t].worth)}</td></tr>`;
   }).join('');
   $('achList').innerHTML = ACHIEVEMENTS.map(a => `<div class="achItem ${S.ach[a.id] ? 'got' : ''}" title="${a.desc}"><svg viewBox="0 0 32 32">${S.ach[a.id] ? ICONS.medal : ICONS.medalOff}</svg>${a.name}</div>`).join('');
-  renderGraphicsRow(); showPauseTab(pauseTab);
+  renderGraphicsRow(); showSens(); showPauseTab(pauseTab);
   $('pauseScreen').hidden = false;
 }
 function showWin() {
