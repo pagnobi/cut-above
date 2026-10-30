@@ -1612,64 +1612,143 @@ function applyVolume() {
 }
 
 // ===================== MUSIC =====================
-// A cheerful loop made live: C – Am – F – G, one bar each in eighth notes, with bass, a plucked arpeggio,
-// a two-part melody, light drums, and a soft pad. At night the drums fade and the pad takes over.
-const MUSIC = { bpm: 104, step: 0, next: 0, timer: 0 };
+// Three tunes made live in the browser, each about two minutes, played in rotation. At a phrase boundary the
+// outgoing tune fades out over ~4 s while the next fades in; a new tune opens with just bass and chords for a
+// bar before its drums and melody join, so the overlap never sounds like two songs at once.
+// Every tune gets calmer at night: drums fade and a soft pad takes over.
 const midiHz = n => 440 * 2 ** ((n - 69) / 12);
-const CHORDS = [[48, 52, 55], [45, 48, 52], [41, 45, 48], [43, 47, 50]];
-const MELODY = [
-  [72, 0, 76, 0, 79, 0, 76, 74, 72, 0, 69, 0, 72, 0, 76, 0, 77, 0, 76, 0, 72, 0, 69, 0, 71, 0, 74, 0, 79, 0, 77, 74],
-  [79, 0, 0, 76, 77, 0, 76, 72, 76, 0, 0, 72, 69, 0, 72, 0, 72, 0, 77, 0, 81, 0, 77, 72, 74, 0, 71, 0, 67, 0, 0, 0],
-];
-function mTone(freq, t, dur, type, vol, cutoff) {
+// instrument voices; each plays into the given tune's bus
+function mTone(bus, freq, t, dur, type, vol, cutoff, vibrato) {
   const ctx = AU.ctx, o = ctx.createOscillator(), g = ctx.createGain();
   o.type = type; o.frequency.setValueAtTime(freq, t);
+  if (vibrato) { const lfo = ctx.createOscillator(), lg = ctx.createGain(); lfo.frequency.value = 5.5; lg.gain.value = freq * 0.012; lfo.connect(lg); lg.connect(o.frequency); lfo.start(t); lfo.stop(t + dur + 0.05); }
   g.gain.setValueAtTime(0.0001, t); g.gain.exponentialRampToValueAtTime(vol, t + 0.012); g.gain.exponentialRampToValueAtTime(0.0001, t + dur);
   let node = o;
   if (cutoff) { const f = ctx.createBiquadFilter(); f.type = 'lowpass'; f.frequency.value = cutoff; o.connect(f); node = f; }
-  node.connect(g); g.connect(AU.music); o.start(t); o.stop(t + dur + 0.05);
+  node.connect(g); g.connect(bus); o.start(t); o.stop(t + dur + 0.05);
 }
-function mNoise(t, dur, type, freq, vol) {
+function mNoise(bus, t, dur, type, freq, vol) {
   const ctx = AU.ctx, s = ctx.createBufferSource(), f = ctx.createBiquadFilter(), g = ctx.createGain();
   s.buffer = AU.noise; f.type = type; f.frequency.value = freq;
   g.gain.setValueAtTime(vol, t); g.gain.exponentialRampToValueAtTime(0.0001, t + dur);
-  s.connect(f); f.connect(g); g.connect(AU.music); s.start(t, Math.random() * 0.5); s.stop(t + dur + 0.02);
+  s.connect(f); f.connect(g); g.connect(bus); s.start(t, Math.random() * 0.5); s.stop(t + dur + 0.02);
 }
-function mKick(t, vol) {
+function mKick(bus, t, vol) {
   const ctx = AU.ctx, o = ctx.createOscillator(), g = ctx.createGain();
   o.frequency.setValueAtTime(130, t); o.frequency.exponentialRampToValueAtTime(42, t + 0.12);
   g.gain.setValueAtTime(vol, t); g.gain.exponentialRampToValueAtTime(0.0001, t + 0.28);
-  o.connect(g); g.connect(AU.music); o.start(t); o.stop(t + 0.3);
+  o.connect(g); g.connect(bus); o.start(t); o.stop(t + 0.3);
 }
-function musicStep(step, t) {
-  const sd = 60 / MUSIC.bpm / 2, bar = Math.floor(step / 8) % 4, k = step % 8, chord = CHORDS[bar];
-  const day = 1 - nightAmt, loop = Math.floor(step / 32) % 2;
-  // bass: root on the beat, a pickup before beat 3
-  if (k === 0 || k === 4) mTone(midiHz(chord[0] - 12), t, sd * 1.8, 'triangle', 0.32, 900);
-  if (k === 3) mTone(midiHz(chord[0] - 5), t, sd * 0.9, 'triangle', 0.2, 900);
-  // plucked arpeggio up through the chord
-  mTone(midiHz(chord[k % 3] + 12 + (k >= 4 ? 12 : 0)), t, sd * 0.9, 'square', 0.045 * (0.6 + 0.4 * day), 2200);
-  // melody: rests on the second time round at night
-  const note = MELODY[loop][step % 32];
-  if (note && !(nightAmt > 0.5 && loop)) mTone(midiHz(note), t, sd * 1.6, 'triangle', 0.12 * (0.55 + 0.45 * day), 3000);
-  // drums fade out at night
-  if (day > 0.05) {
-    if (k === 0 || k === 4) mKick(t, 0.5 * day);
-    if (k === 2 || k === 6) mNoise(t, 0.12, 'bandpass', 1800, 0.16 * day);
-    if (k % 2) mNoise(t, 0.035, 'highpass', 7000, 0.06 * day);
+const mPad = (bus, chord, t, len, up = 12) => { for (const n of chord) mTone(bus, midiHz(n + up), t, len, 'sawtooth', 0.012 + 0.03 * nightAmt, 800); };
+// Each tune: tempo, swing (how late the off-beats land), 4 one-bar chords, two 32-step melodies (0 = rest),
+// and play(step, t, sd, bus, intro) for one eighth-note step.
+const TUNES = [
+  { name: 'Cut Above', bpm: 104, swing: 0,
+    chords: [[48, 52, 55], [45, 48, 52], [41, 45, 48], [43, 47, 50]], // C Am F G
+    melody: [[72, 0, 76, 0, 79, 0, 76, 74, 72, 0, 69, 0, 72, 0, 76, 0, 77, 0, 76, 0, 72, 0, 69, 0, 71, 0, 74, 0, 79, 0, 77, 74],
+             [79, 0, 0, 76, 77, 0, 76, 72, 76, 0, 0, 72, 69, 0, 72, 0, 72, 0, 77, 0, 81, 0, 77, 72, 74, 0, 71, 0, 67, 0, 0, 0]],
+    play(step, t, sd, bus, intro) {
+      const k = step % 8, chord = this.chords[Math.floor(step / 8) % 4], day = 1 - nightAmt, loop = Math.floor(step / 32) % 2;
+      if (k === 0 || k === 4) mTone(bus, midiHz(chord[0] - 12), t, sd * 1.8, 'triangle', 0.32, 900);
+      if (k === 3) mTone(bus, midiHz(chord[0] - 5), t, sd * 0.9, 'triangle', 0.2, 900);
+      mTone(bus, midiHz(chord[k % 3] + 12 + (k >= 4 ? 12 : 0)), t, sd * 0.9, 'square', 0.045 * (0.6 + 0.4 * day), 2200);
+      const note = this.melody[loop][step % 32];
+      if (!intro && note && !(nightAmt > 0.5 && loop)) mTone(bus, midiHz(note), t, sd * 1.6, 'triangle', 0.12 * (0.55 + 0.45 * day), 3000);
+      if (!intro && day > 0.05) {
+        if (k === 0 || k === 4) mKick(bus, t, 0.5 * day);
+        if (k === 2 || k === 6) mNoise(bus, t, 0.12, 'bandpass', 1800, 0.16 * day);
+        if (k % 2) mNoise(bus, t, 0.035, 'highpass', 7000, 0.06 * day);
+      }
+      if (k === 0) mPad(bus, chord, t, sd * 8);
+    } },
+  { name: 'Sunny Stroll', bpm: 92, swing: 0.32,
+    chords: [[55, 59, 62], [50, 54, 57], [52, 55, 59], [48, 52, 55]], // G D Em C
+    melody: [[67, 0, 71, 0, 74, 0, 71, 0, 69, 0, 74, 0, 78, 0, 74, 0, 76, 0, 74, 0, 71, 0, 67, 0, 72, 0, 71, 0, 69, 0, 0, 0],
+             [79, 0, 0, 76, 74, 0, 71, 0, 74, 0, 78, 0, 81, 0, 78, 74, 76, 0, 79, 0, 76, 0, 71, 0, 72, 0, 76, 0, 74, 0, 0, 0]],
+    play(step, t, sd, bus, intro) {
+      const k = step % 8, chord = this.chords[Math.floor(step / 8) % 4], day = 1 - nightAmt, loop = Math.floor(step / 32) % 2;
+      // walking bass: root, fifth, and a step toward the next chord
+      if (k === 0) mTone(bus, midiHz(chord[0] - 12), t, sd * 1.7, 'triangle', 0.3, 800);
+      if (k === 4) mTone(bus, midiHz(chord[2] - 24), t, sd * 1.7, 'triangle', 0.26, 800);
+      if (k === 6) mTone(bus, midiHz(chord[1] - 12), t, sd * 1.2, 'triangle', 0.18, 800);
+      // offbeat chord stabs
+      if (k % 2) for (const n of chord) mTone(bus, midiHz(n + 12), t, sd * 0.45, 'square', 0.022 * (0.5 + 0.5 * day), 1500);
+      // whistled lead
+      const note = this.melody[loop][step % 32];
+      if (!intro && note && !(nightAmt > 0.5 && loop)) mTone(bus, midiHz(note), t, sd * 1.9, 'sine', 0.13 * (0.55 + 0.45 * day), 0, true);
+      if (!intro && day > 0.05) {
+        if (k === 0 || k === 4) mKick(bus, t, 0.38 * day);
+        if (k === 2 || k === 6) mNoise(bus, t, 0.1, 'bandpass', 2200, 0.1 * day);
+        mNoise(bus, t, 0.05, 'highpass', 6000, (k % 2 ? 0.05 : 0.025) * day); // shaker
+      }
+      if (k === 0) mPad(bus, chord, t, sd * 8);
+    } },
+  { name: 'Mower Groove', bpm: 112, swing: 0,
+    chords: [[50, 53, 57], [46, 50, 53], [41, 45, 48], [48, 52, 55]], // Dm Bb F C
+    melody: [[74, 0, 77, 74, 0, 81, 79, 0, 77, 0, 74, 0, 70, 0, 74, 0, 72, 0, 77, 0, 81, 0, 79, 77, 76, 0, 79, 0, 72, 0, 0, 0],
+             [81, 0, 79, 77, 0, 74, 0, 77, 74, 0, 0, 70, 74, 0, 77, 0, 77, 0, 81, 0, 84, 0, 81, 0, 79, 0, 76, 0, 72, 0, 74, 0]],
+    play(step, t, sd, bus, intro) {
+      const k = step % 8, chord = this.chords[Math.floor(step / 8) % 4], day = 1 - nightAmt, loop = Math.floor(step / 32) % 2;
+      // syncopated funk bass with octave pops
+      if (k === 0 || k === 3 || k === 5) mTone(bus, midiHz(chord[0] - 12), t, sd * 0.8, 'sawtooth', 0.2, 600);
+      if (k === 6) mTone(bus, midiHz(chord[0]), t, sd * 0.5, 'sawtooth', 0.14, 900);
+      // bell arpeggio on the beats
+      if (k % 2 === 0) mTone(bus, midiHz(chord[(k / 2) % 3] + 24), t, sd * 1.2, 'triangle', 0.05 * (0.6 + 0.4 * day), 4000);
+      // staccato lead
+      const note = this.melody[loop][step % 32];
+      if (!intro && note && !(nightAmt > 0.5 && loop)) mTone(bus, midiHz(note), t, sd * 0.7, 'square', 0.055 * (0.55 + 0.45 * day), 2600);
+      if (!intro && day > 0.05) {
+        if (k === 0 || k === 3 || k === 4) mKick(bus, t, 0.5 * day);
+        if (k === 2 || k === 6) { mNoise(bus, t, 0.09, 'bandpass', 1200, 0.2 * day); mNoise(bus, t + 0.012, 0.07, 'bandpass', 1500, 0.12 * day); } // clap
+        mNoise(bus, t, k === 7 ? 0.14 : 0.03, 'highpass', 7500, 0.05 * day); // hats, open on the last off-beat
+      }
+      if (k === 0) mPad(bus, chord, t, sd * 8);
+    } },
+];
+const MUSIC = { players: [], idx: 0, timer: 0, seconds: 110, fade: 4 };
+// equal-power crossfade curves: the two tunes' combined loudness stays level through the hand-off
+const FADE_IN = new Float32Array(64).map((_, i) => Math.sin(i / 63 * Math.PI / 2));
+const FADE_OUT = new Float32Array(64).map((_, i) => Math.cos(i / 63 * Math.PI / 2));
+function newPlayer(idx, at, fadeIn) {
+  const tune = TUNES[idx], bus = AU.ctx.createGain(), sd = 60 / tune.bpm / 2;
+  bus.connect(AU.music);
+  if (fadeIn) bus.gain.setValueCurveAtTime(FADE_IN, at, MUSIC.fade); else bus.gain.setValueAtTime(1, at);
+  // play whole 4-bar loops adding up to about MUSIC.seconds
+  return { idx, tune, bus, sd, step: 0, next: at, steps: 32 * Math.max(1, Math.round(MUSIC.seconds / (32 * sd))), endAt: Infinity };
+}
+// schedule every playing tune up to `horizon` (seconds on the audio clock), rotating when a tune runs its course
+function pumpMusic(horizon) {
+  for (let guard = 0; guard < 8; guard++) {
+    let rotated = false;
+    for (const p of [...MUSIC.players]) {
+      while (p.next < horizon && p.next < p.endAt) {
+        const t = p.next + (p.step % 2 ? p.tune.swing * p.sd : 0);
+        p.tune.play(p.step, t, p.sd, p.bus, p.step < 8 && p !== MUSIC.players[0]);
+        p.step++; p.next += p.sd;
+        if (p === MUSIC.players[MUSIC.players.length - 1] && p.step >= p.steps && p.endAt === Infinity) {
+          // hand over to the next tune: this one keeps playing while it fades out
+          p.endAt = p.next + MUSIC.fade + 0.5;
+          p.bus.gain.setValueCurveAtTime(FADE_OUT, p.next, MUSIC.fade);
+          MUSIC.idx = (p.idx + 1) % TUNES.length;
+          MUSIC.players.push(newPlayer(MUSIC.idx, p.next, true));
+          rotated = true;
+        }
+      }
+    }
+    // drop tunes that have faded out
+    for (const p of [...MUSIC.players]) if (p.next >= p.endAt && MUSIC.players.length > 1) { MUSIC.players.splice(MUSIC.players.indexOf(p), 1); setTimeout(() => p.bus.disconnect(), 1000); }
+    if (!rotated) break;
   }
-  // soft pad holds each chord, mostly at night
-  if (k === 0) for (const n of chord) mTone(midiHz(n + 12), t, sd * 8, 'sawtooth', 0.012 + 0.03 * nightAmt, 800);
 }
 function startMusic() {
   if (MUSIC.timer) return;
-  MUSIC.next = AU.ctx.currentTime + 0.15;
+  MUSIC.players = [newPlayer(MUSIC.idx, AU.ctx.currentTime + 0.15, false)];
   // schedule a little ahead on a timer so the beat stays steady even when frames are slow
   MUSIC.timer = setInterval(() => {
     if (!AU.ctx || AU.ctx.state !== 'running') return;
-    const sd = 60 / MUSIC.bpm / 2;
-    if (MUSIC.next < AU.ctx.currentTime) MUSIC.next = AU.ctx.currentTime + 0.05;
-    while (MUSIC.next < AU.ctx.currentTime + 0.3) { musicStep(MUSIC.step++, MUSIC.next); MUSIC.next += sd; }
+    const now = AU.ctx.currentTime;
+    for (const p of MUSIC.players) if (p.next < now) { const skip = Math.ceil((now + 0.05 - p.next) / p.sd); p.next += skip * p.sd; p.step += skip; } // after a stall, skip ahead
+    pumpMusic(now + 0.3);
   }, 60);
 }
 function blip(freq, dur, type = 'triangle', vol = 0.25, when = 0) {
@@ -2908,5 +2987,5 @@ function start(data) {
 }
 window.claude?.hot?.snapshot?.(() => { S.cutBits = encodeCut(); S.gridSig = gridSig; return { save: S }; });
 window.claude?.hot?.ready ? window.claude.hot.ready(start) : start(window.claude?.hot?.data ?? {});
-window.__game = { MUSIC, AU, musicStep, NET, avatars, predictedPos, hostLobby, joinLobby, robots, get S() { return S; }, P, get state() { return state; }, keys, setMouse: v => mouseDown = v, cutAt, TIERS, tierCount, cutCount, ZONE_NEED, save, findTarget, settings, applyQuality, triCount, fpsMon, syncTool, spawnToolMesh, useAction, putDown, dropBag, selectTool, addRobot };
+window.__game = { MUSIC, AU, TUNES, newPlayer, pumpMusic, NET, avatars, predictedPos, hostLobby, joinLobby, robots, get S() { return S; }, P, get state() { return state; }, keys, setMouse: v => mouseDown = v, cutAt, TIERS, tierCount, cutCount, ZONE_NEED, save, findTarget, settings, applyQuality, triCount, fpsMon, syncTool, spawnToolMesh, useAction, putDown, dropBag, selectTool, addRobot };
 </script>
