@@ -137,6 +137,9 @@ body { background: #0f1a0d; color: var(--ink); font-family: var(--body); font-si
 .tabs { display: flex; gap: 6px; flex-wrap: wrap; }
 .tab { font-family: var(--display); font-size: 13px; padding: 9px 14px; border-radius: 8px; border: 1px solid var(--line); background: transparent; color: var(--ink-dim); cursor: pointer; }
 .tab[aria-selected="true"] { background: var(--ink); color: #16241a; border-color: var(--ink); }
+.pauseTabs { border-bottom: 1px solid var(--line); padding-bottom: 12px; }
+.pane { display: grid; gap: 14px; min-height: 220px; align-content: start; }
+.paneHint { font-size: 14px !important; }
 #shopList { overflow-y: auto; display: grid; gap: 8px; padding-right: 4px; min-height: 0; }
 .item { display: grid; grid-template-columns: 52px 1fr auto; gap: 14px; align-items: center; padding: 12px; border-radius: 10px; background: rgba(255,255,255,.035); border: 1px solid var(--line); }
 .item .ico { width: 52px; height: 52px; border-radius: 8px; display: grid; place-items: center; background: rgba(0,0,0,.3); }
@@ -268,34 +271,49 @@ body { background: #0f1a0d; color: var(--ink); font-family: var(--body); font-si
 <div class="overlay" id="pauseScreen" hidden>
   <div class="card">
     <h2 class="title" style="font-size:44px">Paused</h2>
-    <p id="pauseStats"></p>
-    <table class="zones num" id="zoneTable"></table>
-    <p class="sectionLabel">Trophies</p>
-    <div class="achList" id="achList"></div>
-    <div id="mpPanel" hidden><p class="sectionLabel" id="mpPanelTitle">Lobby</p><div class="codeBox"><span id="mpCode"></span><button class="btn ghost" id="mpCopy">Copy code</button><span id="mpCopied" role="status"></span></div><div class="players" id="mpPlayers"></div></div>
-    <p class="sectionLabel">Sound</p>
-    <div class="vols">
-      <label for="volMaster">Master</label><input type="range" id="volMaster" min="0" max="100" step="5"><output id="volMasterV" for="volMaster"></output>
-      <label for="volSfx">Game effects</label><input type="range" id="volSfx" min="0" max="100" step="5"><output id="volSfxV" for="volSfx"></output>
-      <label for="volMusic">Music</label><input type="range" id="volMusic" min="0" max="100" step="5"><output id="volMusicV" for="volMusic"></output>
+    <div class="tabs pauseTabs" role="tablist" aria-label="Menu">
+      <button class="tab" role="tab" data-ptab="progress" id="ptab-progress" aria-controls="ppane-progress">Progress</button>
+      <button class="tab" role="tab" data-ptab="graphics" id="ptab-graphics" aria-controls="ppane-graphics">Graphics</button>
+      <button class="tab" role="tab" data-ptab="sound" id="ptab-sound" aria-controls="ppane-sound">Sound</button>
+      <button class="tab" role="tab" data-ptab="controls" id="ptab-controls" aria-controls="ppane-controls">Controls</button>
     </div>
-    <p class="sectionLabel">Graphics</p>
-    <div class="tabs" id="qualityRow"></div>
-    <p class="sectionLabel">Controls</p>
-    <div class="keys" id="pauseKeys">
-      <kbd>WASD</kbd><span>Walk (Shift to sprint)</span>
-      <kbd>Mouse</kbd><span>Look around</span>
-      <kbd>Hold click</kbd><span>Cut the grass in front of you (F toggles auto-cut)</span>
-      <kbd>E</kbd><span>Pick up tools and bags, get on mowers, open the shop on a pad</span>
-      <kbd>G</kbd><span>Put down what you're holding</span>
-      <kbd>B</kbd><span>Drop your bag here and start a fresh one</span>
-      <kbd>1, 2, 3…</kbd><span>Switch tools in your hotbar (or scroll), or find big gear you left behind</span>
-      <kbd>Esc / Tab</kbd><span>This menu</span>
-      <kbd>M</kbd><span>Mute</span>
+    <div class="pane" role="tabpanel" id="ppane-progress" aria-labelledby="ptab-progress">
+      <div id="mpPanel" hidden><p class="sectionLabel" id="mpPanelTitle">Lobby</p><div class="codeBox"><span id="mpCode"></span><button class="btn ghost" id="mpCopy">Copy code</button><span id="mpCopied" role="status"></span></div><div class="players" id="mpPlayers"></div></div>
+      <p id="pauseStats"></p>
+      <table class="zones num" id="zoneTable"></table>
+      <p class="sectionLabel">Trophies</p>
+      <div class="achList" id="achList"></div>
+    </div>
+    <div class="pane" role="tabpanel" id="ppane-graphics" aria-labelledby="ptab-graphics" hidden>
+      <p class="sectionLabel">Quality</p>
+      <div class="tabs" id="qualityRow"></div>
+      <p class="paneHint">Auto starts high and steps down if your frame rate drops. Lower settings draw less grass in the distance and render at a lower resolution.</p>
+      <p class="sectionLabel">Display</p>
+      <div class="tabs" id="toggleRow"></div>
+    </div>
+    <div class="pane" role="tabpanel" id="ppane-sound" aria-labelledby="ptab-sound" hidden>
+      <div class="vols">
+        <label for="volMaster">Master</label><input type="range" id="volMaster" min="0" max="100" step="5"><output id="volMasterV" for="volMaster"></output>
+        <label for="volSfx">Game effects</label><input type="range" id="volSfx" min="0" max="100" step="5"><output id="volSfxV" for="volSfx"></output>
+        <label for="volMusic">Music</label><input type="range" id="volMusic" min="0" max="100" step="5"><output id="volMusicV" for="volMusic"></output>
+      </div>
+      <div class="row"><button class="btn ghost" id="muteBtn">Mute all (M)</button></div>
+    </div>
+    <div class="pane" role="tabpanel" id="ppane-controls" aria-labelledby="ptab-controls" hidden>
+      <div class="keys" id="pauseKeys">
+        <kbd>WASD</kbd><span>Walk (Shift to sprint)</span>
+        <kbd>Mouse</kbd><span>Look around</span>
+        <kbd>Hold click</kbd><span>Cut the grass in front of you (F toggles auto-cut)</span>
+        <kbd>E</kbd><span>Pick up tools and bags, get on mowers, open the shop on a pad</span>
+        <kbd>G</kbd><span>Put down what you're holding</span>
+        <kbd>B</kbd><span>Drop your bag here and start a fresh one</span>
+        <kbd>1, 2, 3…</kbd><span>Switch tools in your hotbar (or scroll), or find big gear you left behind</span>
+        <kbd>Esc / Tab</kbd><span>This menu</span>
+        <kbd>M</kbd><span>Mute</span>
+      </div>
     </div>
     <div class="row">
       <button class="btn" id="resumeBtn">Resume</button>
-      <button class="btn ghost" id="muteBtn">Mute all (M)</button>
       <button class="btn ghost" id="resetBtn">Reset progress</button>
       <button class="btn ghost" id="mpLeave" hidden>Leave lobby</button>
     </div>
@@ -1848,9 +1866,9 @@ function monitorFps(rawDt) {
 }
 function renderGraphicsRow() {
   const opts = [['auto', `Auto (${QUALITY[settings.auto].label})`], ['high', 'High'], ['medium', 'Medium'], ['low', 'Low']];
-  $('qualityRow').innerHTML = opts.map(([k, l]) => `<button class="tab" data-q="${k}" aria-selected="${settings.quality === k}">${l}</button>`).join('') +
-    `<button class="tab" data-q="fps" aria-selected="${settings.fps}">Show FPS</button>` +
-    `<button class="tab" data-q="daynight" aria-selected="${settings.daynight}">Day/night cycle</button>`;
+  $('qualityRow').innerHTML = opts.map(([k, l]) => `<button class="tab" data-q="${k}" aria-selected="${settings.quality === k}">${l}</button>`).join('');
+  $('toggleRow').innerHTML = `<button class="tab" data-q="fps" aria-pressed="${settings.fps}" aria-selected="${settings.fps}">Show FPS: ${settings.fps ? 'on' : 'off'}</button>` +
+    `<button class="tab" data-q="daynight" aria-pressed="${settings.daynight}" aria-selected="${settings.daynight}">Day/night cycle: ${settings.daynight ? 'on' : 'off'}</button>`;
 }
 
 addEventListener('keydown', e => {
@@ -2923,7 +2941,7 @@ function pause() {
     return `<tr><td><span class="chip" style="display:inline-flex;gap:6px;align-items:center"><span class="swatch" style="background:${TIERS[t].color}"></span>${TIERS[t].zone}</span></td><td class="r">${Math.round(TIERS[t].area).toLocaleString('en-US')} m²</td><td class="r">${p >= 1 ? '✓ 100' : (p * 100).toFixed(1)}%</td><td class="r">${fmtRate(TIERS[t].perM2)}</td><td class="r">${fmt(TIERS[t].worth)}</td></tr>`;
   }).join('');
   $('achList').innerHTML = ACHIEVEMENTS.map(a => `<div class="achItem ${S.ach[a.id] ? 'got' : ''}" title="${a.desc}"><svg viewBox="0 0 32 32">${S.ach[a.id] ? ICONS.medal : ICONS.medalOff}</svg>${a.name}</div>`).join('');
-  renderGraphicsRow();
+  renderGraphicsRow(); showPauseTab(pauseTab);
   $('pauseScreen').hidden = false;
 }
 function showWin() {
@@ -2939,13 +2957,22 @@ for (const [id, k] of [['volMaster', 'master'], ['volSfx', 'sfx'], ['volMusic', 
   applyVolume(); saveSettings();
 });
 $('startBtn').addEventListener('click', startPlaying);
-$('qualityRow').addEventListener('click', e => {
+// menu tabs; the menu reopens on the tab you last used
+let pauseTab = 'progress';
+function showPauseTab(name) {
+  pauseTab = name;
+  document.querySelectorAll('[data-ptab]').forEach(b => b.setAttribute('aria-selected', b.dataset.ptab === name));
+  document.querySelectorAll('#pauseScreen .pane').forEach(p => p.hidden = p.id !== 'ppane-' + name);
+}
+document.querySelector('.pauseTabs').addEventListener('click', e => { const b = e.target.closest('[data-ptab]'); if (b) showPauseTab(b.dataset.ptab); });
+for (const id of ['qualityRow', 'toggleRow']) $(id).addEventListener('click', e => graphicsClick(e));
+function graphicsClick(e) {
   const b = e.target.closest('button[data-q]'); if (!b) return;
   if (b.dataset.q === 'fps') settings.fps = !settings.fps;
   else if (b.dataset.q === 'daynight') settings.daynight = !settings.daynight;
   else { settings.quality = b.dataset.q; if (b.dataset.q === 'auto') settings.auto = isTouch ? 'medium' : 'high'; }
   saveSettings(); applyQuality(); renderGraphicsRow();
-});
+}
 $('resumeBtn').addEventListener('click', startPlaying);
 $('muteBtn').addEventListener('click', toggleMute);
 $('winKeep').addEventListener('click', startPlaying);
