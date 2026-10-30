@@ -125,6 +125,9 @@ body { background: #0f1a0d; color: var(--ink); font-family: var(--body); font-si
 .players { display: grid; gap: 4px; }
 .players div { display: flex; align-items: center; gap: 8px; font-weight: 600; }
 .players i { width: 12px; height: 12px; border-radius: 50%; flex: none; }
+.vols { display: grid; grid-template-columns: max-content 1fr 3.2em; gap: 8px 14px; align-items: center; font-weight: 600; }
+.vols input { width: 100%; min-width: 0; accent-color: var(--safety); }
+.vols output { text-align: right; font-variant-numeric: tabular-nums; color: var(--ink-dim); }
 
 /* Shop */
 #shop .card { max-width: 840px; max-height: min(88vh, 760px); grid-template-rows: auto auto 1fr; padding: 22px; }
@@ -270,6 +273,12 @@ body { background: #0f1a0d; color: var(--ink); font-family: var(--body); font-si
     <p class="sectionLabel">Trophies</p>
     <div class="achList" id="achList"></div>
     <div id="mpPanel" hidden><p class="sectionLabel" id="mpPanelTitle">Lobby</p><div class="codeBox"><span id="mpCode"></span><button class="btn ghost" id="mpCopy">Copy code</button><span id="mpCopied" role="status"></span></div><div class="players" id="mpPlayers"></div></div>
+    <p class="sectionLabel">Sound</p>
+    <div class="vols">
+      <label for="volMaster">Master</label><input type="range" id="volMaster" min="0" max="100" step="5"><output id="volMasterV" for="volMaster"></output>
+      <label for="volSfx">Game effects</label><input type="range" id="volSfx" min="0" max="100" step="5"><output id="volSfxV" for="volSfx"></output>
+      <label for="volMusic">Music</label><input type="range" id="volMusic" min="0" max="100" step="5"><output id="volMusicV" for="volMusic"></output>
+    </div>
     <p class="sectionLabel">Graphics</p>
     <div class="tabs" id="qualityRow"></div>
     <p class="sectionLabel">Controls</p>
@@ -286,7 +295,7 @@ body { background: #0f1a0d; color: var(--ink); font-family: var(--body); font-si
     </div>
     <div class="row">
       <button class="btn" id="resumeBtn">Resume</button>
-      <button class="btn ghost" id="muteBtn">Sound: on</button>
+      <button class="btn ghost" id="muteBtn">Mute all (M)</button>
       <button class="btn ghost" id="resetBtn">Reset progress</button>
       <button class="btn ghost" id="mpLeave" hidden>Leave lobby</button>
     </div>
@@ -1576,7 +1585,11 @@ function initAudio() {
   try {
     const ctx = new (window.AudioContext || window.webkitAudioContext)();
     AU.ctx = ctx;
-    AU.master = ctx.createGain(); AU.master.gain.value = S.muted ? 0 : 0.5; AU.master.connect(ctx.destination);
+    // master <- effects bus (AU.master, which every sound effect already connects to) and music bus
+    AU.out = ctx.createGain(); AU.out.connect(ctx.destination);
+    AU.master = ctx.createGain(); AU.master.connect(AU.out);
+    AU.music = ctx.createGain(); AU.music.connect(AU.out);
+    applyVolume();
     const len = ctx.sampleRate; const buf = ctx.createBuffer(1, len, ctx.sampleRate); const d = buf.getChannelData(0); for (let k = 0; k < len; k++) d[k] = Math.random() * 2 - 1;
     AU.noise = buf;
     AU.eGain = ctx.createGain(); AU.eGain.gain.value = 0;
@@ -1590,7 +1603,81 @@ function initAudio() {
     AU.nFilter = ctx.createBiquadFilter(); AU.nFilter.type = 'bandpass'; AU.nFilter.frequency.value = 3000; AU.nFilter.Q.value = 0.8;
     AU.nGain = ctx.createGain(); AU.nGain.gain.value = 0;
     AU.nSrc.connect(AU.nFilter); AU.nFilter.connect(AU.nGain); AU.nGain.connect(AU.master); AU.nSrc.start();
+    startMusic();
   } catch (e) { AU.ctx = null; }
+}
+function applyVolume() {
+  const v = settings.vol;
+  if (AU.ctx) {
+    const t = AU.ctx.currentTime;
+    AU.out.gain.setTargetAtTime(S.muted ? 0 : (v.master / 100) * 0.6, t, 0.03);
+    AU.master.gain.setTargetAtTime(v.sfx / 100, t, 0.03);
+    AU.music.gain.setTargetAtTime((v.music / 100) * 0.55, t, 0.03);
+  }
+  for (const [id, k] of [['volMaster', 'master'], ['volSfx', 'sfx'], ['volMusic', 'music']]) { $(id).value = v[k]; $(id + 'V').textContent = v[k] + '%'; }
+  $('muteBtn').textContent = S.muted ? 'Unmute (M)' : 'Mute all (M)';
+}
+
+// ===================== MUSIC =====================
+// A cheerful loop made live: C – Am – F – G, one bar each in eighth notes, with bass, a plucked arpeggio,
+// a two-part melody, light drums, and a soft pad. At night the drums fade and the pad takes over.
+const MUSIC = { bpm: 104, step: 0, next: 0, timer: 0 };
+const midiHz = n => 440 * 2 ** ((n - 69) / 12);
+const CHORDS = [[48, 52, 55], [45, 48, 52], [41, 45, 48], [43, 47, 50]];
+const MELODY = [
+  [72, 0, 76, 0, 79, 0, 76, 74, 72, 0, 69, 0, 72, 0, 76, 0, 77, 0, 76, 0, 72, 0, 69, 0, 71, 0, 74, 0, 79, 0, 77, 74],
+  [79, 0, 0, 76, 77, 0, 76, 72, 76, 0, 0, 72, 69, 0, 72, 0, 72, 0, 77, 0, 81, 0, 77, 72, 74, 0, 71, 0, 67, 0, 0, 0],
+];
+function mTone(freq, t, dur, type, vol, cutoff) {
+  const ctx = AU.ctx, o = ctx.createOscillator(), g = ctx.createGain();
+  o.type = type; o.frequency.setValueAtTime(freq, t);
+  g.gain.setValueAtTime(0.0001, t); g.gain.exponentialRampToValueAtTime(vol, t + 0.012); g.gain.exponentialRampToValueAtTime(0.0001, t + dur);
+  let node = o;
+  if (cutoff) { const f = ctx.createBiquadFilter(); f.type = 'lowpass'; f.frequency.value = cutoff; o.connect(f); node = f; }
+  node.connect(g); g.connect(AU.music); o.start(t); o.stop(t + dur + 0.05);
+}
+function mNoise(t, dur, type, freq, vol) {
+  const ctx = AU.ctx, s = ctx.createBufferSource(), f = ctx.createBiquadFilter(), g = ctx.createGain();
+  s.buffer = AU.noise; f.type = type; f.frequency.value = freq;
+  g.gain.setValueAtTime(vol, t); g.gain.exponentialRampToValueAtTime(0.0001, t + dur);
+  s.connect(f); f.connect(g); g.connect(AU.music); s.start(t, Math.random() * 0.5); s.stop(t + dur + 0.02);
+}
+function mKick(t, vol) {
+  const ctx = AU.ctx, o = ctx.createOscillator(), g = ctx.createGain();
+  o.frequency.setValueAtTime(130, t); o.frequency.exponentialRampToValueAtTime(42, t + 0.12);
+  g.gain.setValueAtTime(vol, t); g.gain.exponentialRampToValueAtTime(0.0001, t + 0.28);
+  o.connect(g); g.connect(AU.music); o.start(t); o.stop(t + 0.3);
+}
+function musicStep(step, t) {
+  const sd = 60 / MUSIC.bpm / 2, bar = Math.floor(step / 8) % 4, k = step % 8, chord = CHORDS[bar];
+  const day = 1 - nightAmt, loop = Math.floor(step / 32) % 2;
+  // bass: root on the beat, a pickup before beat 3
+  if (k === 0 || k === 4) mTone(midiHz(chord[0] - 12), t, sd * 1.8, 'triangle', 0.32, 900);
+  if (k === 3) mTone(midiHz(chord[0] - 5), t, sd * 0.9, 'triangle', 0.2, 900);
+  // plucked arpeggio up through the chord
+  mTone(midiHz(chord[k % 3] + 12 + (k >= 4 ? 12 : 0)), t, sd * 0.9, 'square', 0.045 * (0.6 + 0.4 * day), 2200);
+  // melody: rests on the second time round at night
+  const note = MELODY[loop][step % 32];
+  if (note && !(nightAmt > 0.5 && loop)) mTone(midiHz(note), t, sd * 1.6, 'triangle', 0.12 * (0.55 + 0.45 * day), 3000);
+  // drums fade out at night
+  if (day > 0.05) {
+    if (k === 0 || k === 4) mKick(t, 0.5 * day);
+    if (k === 2 || k === 6) mNoise(t, 0.12, 'bandpass', 1800, 0.16 * day);
+    if (k % 2) mNoise(t, 0.035, 'highpass', 7000, 0.06 * day);
+  }
+  // soft pad holds each chord, mostly at night
+  if (k === 0) for (const n of chord) mTone(midiHz(n + 12), t, sd * 8, 'sawtooth', 0.012 + 0.03 * nightAmt, 800);
+}
+function startMusic() {
+  if (MUSIC.timer) return;
+  MUSIC.next = AU.ctx.currentTime + 0.15;
+  // schedule a little ahead on a timer so the beat stays steady even when frames are slow
+  MUSIC.timer = setInterval(() => {
+    if (!AU.ctx || AU.ctx.state !== 'running') return;
+    const sd = 60 / MUSIC.bpm / 2;
+    if (MUSIC.next < AU.ctx.currentTime) MUSIC.next = AU.ctx.currentTime + 0.05;
+    while (MUSIC.next < AU.ctx.currentTime + 0.3) { musicStep(MUSIC.step++, MUSIC.next); MUSIC.next += sd; }
+  }, 60);
 }
 function blip(freq, dur, type = 'triangle', vol = 0.25, when = 0) {
   if (!AU.ctx) return;
@@ -1644,7 +1731,7 @@ const QUALITY = {
   low:    { label: 'Low',    near: 0.32, far: 0.16, lod: 14, cull: 56, fog: [16, 52], pr: 0.75, shadows: 0 },
 };
 const SETTINGS_KEY = 'cutabove_settings';
-const settings = { quality: 'auto', auto: isTouch ? 'medium' : 'high', fps: false, daynight: true };
+const settings = { quality: 'auto', auto: isTouch ? 'medium' : 'high', fps: false, daynight: true, vol: { master: 80, sfx: 80, music: 50 } };
 try { Object.assign(settings, JSON.parse(localStorage.getItem(SETTINGS_KEY)) || {}); } catch (e) {}
 const saveSettings = () => { try { localStorage.setItem(SETTINGS_KEY, JSON.stringify(settings)); } catch (e) {} };
 const activeLevel = () => settings.quality === 'auto' ? settings.auto : settings.quality;
@@ -1688,9 +1775,10 @@ function renderGraphicsRow() {
 }
 
 addEventListener('keydown', e => {
-  if (e.target.closest?.('input')) return;
+  if (e.target.closest?.('input:not([type=range])')) return; // typing a name or code isn't playing
   keys.add(e.code);
   if (e.code === 'Tab') { e.preventDefault(); if (state === 'play' && !shopOpen) { if (document.pointerLockElement) document.exitPointerLock(); pause(); } else if (state === 'paused') startPlaying(); return; }
+  if (e.code === 'KeyM' && !e.repeat) { toggleMute(); return; } // works in menus too
   if (state !== 'play' || e.repeat) return;
   if (e.code === 'KeyE') { if (shopOpen) closeShop(); else useAction(); }
   if (shopOpen) return;
@@ -1699,7 +1787,6 @@ addEventListener('keydown', e => {
   if (e.code === 'KeyG') putDown();
   if (e.code === 'KeyB') dropBag();
   if (e.code === 'KeyF') cutToggle = !cutToggle;
-  if (e.code === 'KeyM') toggleMute();
 });
 addEventListener('keyup', e => keys.delete(e.code));
 addEventListener('blur', () => { keys.clear(); mouseDown = false; });
@@ -2766,7 +2853,12 @@ function showWin() {
   $('winStats').textContent = `You mowed ${Math.round(tierCount.reduce((a, b) => a + b, 0) * CELL * CELL).toLocaleString('en-US')} m² of grass in ${fmtTime(S.stats.time)} and earned ${fmt(S.stats.earned)}.`;
   $('winScreen').hidden = false;
 }
-function toggleMute() { S.muted = !S.muted; if (AU.master) AU.master.gain.value = S.muted ? 0 : 0.5; $('muteBtn').textContent = 'Sound: ' + (S.muted ? 'off' : 'on'); save(); }
+function toggleMute() { S.muted = !S.muted; applyVolume(); save(); }
+for (const [id, k] of [['volMaster', 'master'], ['volSfx', 'sfx'], ['volMusic', 'music']]) $(id).addEventListener('input', e => {
+  settings.vol[k] = +e.target.value;
+  if (S.muted && k === 'master') S.muted = false; // moving the master slider unmutes
+  applyVolume(); saveSettings();
+});
 $('startBtn').addEventListener('click', startPlaying);
 $('qualityRow').addEventListener('click', e => {
   const b = e.target.closest('button[data-q]'); if (!b) return;
@@ -2791,7 +2883,7 @@ $('resetBtn').addEventListener('click', () => {
   P.x = 0; P.z = 3; save(); startPlaying();
 });
 addEventListener('keydown', e => {
-  if (e.target.closest?.('input')) return;
+  if (e.target.closest?.('input:not([type=range])')) return; // typing a name or code isn't playing
   if (e.code === 'Escape' && shopOpen) closeShop();
   else if (e.code === 'Escape' && state === 'play') { if (document.pointerLockElement) document.exitPointerLock(); pause(); }
   else if (e.code === 'Escape' && state === 'paused' && !$('pauseScreen').hidden) startPlaying();
@@ -2809,7 +2901,8 @@ function start(data) {
   applyQuality(); recountChunks(); groundFull(); mmFull();
   if (S.px || S.pz) { const p = pushOut(S.px, S.pz, 0.5); P.x = p[0]; P.z = p[1]; }
   if (S.yaw !== null && isFinite(S.yaw)) P.yaw = S.yaw;
-  $('muteBtn').textContent = 'Sound: ' + (S.muted ? 'off' : 'on');
+  settings.vol = Object.assign({ master: 80, sfx: 80, music: 50 }, settings.vol);
+  applyVolume();
   rebuildDepots();
   syncRobotSims();
   for (const s of S.sacks) spawnSackMesh(s);
@@ -2822,7 +2915,7 @@ function start(data) {
 }
 window.claude?.hot?.snapshot?.(() => { S.cutBits = encodeCut(); S.gridSig = gridSig; return { save: S }; });
 window.claude?.hot?.ready ? window.claude.hot.ready(start) : start(window.claude?.hot?.data ?? {});
-window.__game = { NET, avatars, predictedPos, hostLobby, joinLobby, robots, get S() { return S; }, P, get state() { return state; }, keys, setMouse: v => mouseDown = v, cutAt, TIERS, tierCount, cutCount, ZONE_NEED, save, findTarget, settings, applyQuality, triCount, fpsMon, syncTool, spawnToolMesh, useAction, putDown, dropBag, selectTool, addRobot };
+window.__game = { MUSIC, AU, musicStep, NET, avatars, predictedPos, hostLobby, joinLobby, robots, get S() { return S; }, P, get state() { return state; }, keys, setMouse: v => mouseDown = v, cutAt, TIERS, tierCount, cutCount, ZONE_NEED, save, findTarget, settings, applyQuality, triCount, fpsMon, syncTool, spawnToolMesh, useAction, putDown, dropBag, selectTool, addRobot };
 </script>
 
 </body>
