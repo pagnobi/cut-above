@@ -125,6 +125,7 @@ body { background: #0f1a0d; color: var(--ink); font-family: var(--body); font-si
 .players { display: grid; gap: 4px; }
 .players div { display: flex; align-items: center; gap: 8px; font-weight: 600; }
 .players i { width: 12px; height: 12px; border-radius: 50%; flex: none; }
+.players .kick { margin-left: auto; font: 600 13px var(--body); color: var(--stop); background: transparent; border: 1px solid var(--stop); border-radius: 6px; padding: 3px 10px; cursor: pointer; }
 .vols { display: grid; grid-template-columns: max-content 1fr 3.2em; gap: 8px 14px; align-items: center; font-weight: 600; }
 .vols input { width: 100%; min-width: 0; accent-color: var(--safety); }
 .vols output { text-align: right; font-variant-numeric: tabular-nums; color: var(--ink-dim); }
@@ -319,6 +320,7 @@ body { background: #0f1a0d; color: var(--ink); font-family: var(--body); font-si
       <button class="btn" id="resumeBtn">Resume</button>
       <button class="btn ghost" id="resetBtn">Reset progress</button>
       <button class="btn ghost" id="mpLeave" hidden>Leave lobby</button>
+      <button class="btn ghost" id="mpClose" hidden>Close lobby</button>
     </div>
   </div>
 </div>
@@ -1985,20 +1987,39 @@ function dropHeld() {
 }
 function putDown() {
   if (S.carry.length) {
+    if (!canDropSack()) return;
+    // everything in your arms goes down as one bag
     const fx = -Math.sin(P.yaw), fz = -Math.cos(P.yaw);
-    S.carry.forEach((c, k) => addSack({ x: P.x + fx * 0.9 + (k - (S.carry.length - 1) / 2) * 0.7 * -fz, z: P.z + fz * 0.9 + (k - (S.carry.length - 1) / 2) * 0.7 * fx, n: c.n, v: c.v }));
-    S.carry = []; thudSound(); syncTool(); return;
+    dropSackAt(P.x + fx * 0.9, P.z + fz * 0.9, S.carry.reduce((a, c) => a + c.n, 0), carryValue());
+    S.carry = []; thudSound(); syncTool(); lastDropAt = performance.now(); return;
   }
   if (S.held) { const n = toolDef(S.held).name; dropHeld(); toast(`Left the ${n} here`, '', 1.4); return; }
   toast('Nothing to put down', '', 1.2);
 }
+// Bags on the ground are limited so nobody can flood the map (and everyone's frame rate) with them:
+// a bag needs MIN_DROP clippings, you can drop one every 1.5 s, a drop next to another bag tops that bag up,
+// and the lobby holds at most MAX_SACKS bags (MAX_SACKS_EACH from any one player).
+const MIN_DROP = 25, MAX_SACKS = 80, MAX_SACKS_EACH = 20;
+let lastDropAt = 0;
+function dropSackAt(x, z, n, v) {
+  const near = S.sacks.find(o => (o.x - x) ** 2 + (o.z - z) ** 2 < 2.25);
+  if (near) { takeSack(near); n += near.n; v += near.v; x = near.x; z = near.z; } // top up the bag that's already there
+  addSack({ x, z, n, v, by: NET.selfId });
+  return !!near;
+}
+function canDropSack() {
+  if (performance.now() - lastDropAt < 1500) { toast('Wait a moment before dropping another bag', 'warn', 1.2); return false; }
+  if (S.sacks.length >= MAX_SACKS || (NET.on && S.sacks.filter(o => o.by === NET.selfId).length >= MAX_SACKS_EACH)) { toast('Too many bags on the ground · pick some up or cash them in first', 'warn', 2.2); return false; }
+  return true;
+}
 function dropBag() {
   if (!S.bag) { toast('Your bag is empty', '', 1.2); return; }
+  if (S.bag < MIN_DROP) { toast(`Too little to bag up · cut at least ${MIN_DROP} clippings first`, 'warn', 1.6); return; }
+  if (!canDropSack()) return;
   const fx = -Math.sin(P.yaw), fz = -Math.cos(P.yaw), back = S.held && toolDef(S.held).kind === 'ride' ? 1.5 : 0.8;
-  const s = { x: P.x - fx * back + (Math.random() - .5) * 0.3, z: P.z - fz * back + (Math.random() - .5) * 0.3, n: S.bag, v: S.bagValue };
-  addSack(s);
-  S.bag = 0; S.bagValue = 0; thudSound();
-  toast(`Bag dropped (${fmt(s.v * sellMult())}) · fresh bag on`, 'good', 1.6);
+  const v = S.bagValue, merged = dropSackAt(P.x - fx * back + (Math.random() - .5) * 0.3, P.z - fz * back + (Math.random() - .5) * 0.3, S.bag, S.bagValue);
+  S.bag = 0; S.bagValue = 0; thudSound(); lastDropAt = performance.now();
+  toast(merged ? `Added to the bag here (${fmt(v * sellMult())}) · fresh bag on` : `Bag dropped (${fmt(v * sellMult())}) · fresh bag on`, 'good', 1.6);
 }
 function nearestInteract() {
   let best = null, bd = Infinity;
@@ -2304,7 +2325,7 @@ function findHunt() {
 // `?net=local` links tabs in one browser together (for testing).
 // The oldest player in the lobby is the host: in co-op it owns the shared wallet and runs the robots.
 const NET = { on: false, lobby: '', mode: 'coop', coop: false, isHost: true, selfId: '', hostId: '', since: 0, name: '', color: 0, tx: null,
-  peers: [], known: new Set(), pool: 0, grace: 0, graceAt: 0, rate: new Map(), gotSnap: false, wantTimer: 0, snapSentAt: new Map(), outCuts: [], cutTimer: 0, presTimer: 0, econKey: '', econAt: 0, econBeat: 0, persistTimer: 8, persisting: false, snapIn: new Map(), reqSeq: 0, pending: new Map() };
+  peers: [], known: new Set(), blocked: new Set(), lastSackFrom: new Map(), pool: 0, grace: 0, graceAt: 0, rate: new Map(), gotSnap: false, wantTimer: 0, snapSentAt: new Map(), outCuts: [], cutTimer: 0, presTimer: 0, econKey: '', econAt: 0, econBeat: 0, persistTimer: 8, persisting: false, snapIn: new Map(), reqSeq: 0, pending: new Map() };
 const PLAYER_COLORS = [0xe8742c, 0x3f8fe0, 0xd04a8a, 0x2fb07a, 0xf2c230, 0x9a6ae0, 0xe04a4a, 0x40c8d0];
 const lobbySlug = s => s.toLowerCase().trim().replace(/[^a-z0-9_.-]+/g, '-').replace(/^[^a-z0-9]+/, '').slice(0, 40) || 'lobby';
 const colorFor = id => { let h = 0; for (const ch of id) h = (h * 31 + ch.charCodeAt(0)) >>> 0; return h % PLAYER_COLORS.length; };
@@ -2318,10 +2339,10 @@ const writeLobbyLocal = (slug, o) => { try { localStorage.setItem(localLobbyKey(
 // presence for transports without a built-in one: rebroadcast ~10x a second, forget peers silent for 5 s
 function presencePump(tx, sendPres) {
   const seen = new Map();
-  tx.presence = obj => { tx._pres = obj; sendPres(obj); }; // send right away; waiting for a timer only adds lag
+  tx.presence = obj => { if (!NET.on) return; tx._pres = obj; sendPres(obj); }; // send right away; waiting for a timer only adds lag
   tx.peers = () => [...seen].map(([id, v]) => ({ id, pres: v.pres }));
   tx._seen = seen;
-  setInterval(() => { if (tx._pres) sendPres(tx._pres); const now = Date.now(); for (const [id, v] of seen) if (now - v.t > 5000) seen.delete(id); }, 1000);
+  setInterval(() => { if (tx._pres && NET.on) sendPres(tx._pres); const now = Date.now(); for (const [id, v] of seen) if (now - v.t > 5000) seen.delete(id); }, 1000);
   return (pres, id) => seen.set(id, { pres, t: Date.now() });
 }
 async function makeClaudeTransport(slug) {
@@ -2539,7 +2560,7 @@ function lobbyText() {
   return `${NET.coop ? 'co-op, one shared wallet' : 'shared map, own wallets'} · ${who}`;
 }
 function renderPlayers() {
-  $('mpPanel').hidden = !NET.on; $('mpLeave').hidden = !NET.on;
+  $('mpPanel').hidden = !NET.on; $('mpLeave').hidden = !NET.on; $('mpClose').hidden = !(NET.on && NET.isHost);
   if (!NET.on) return;
   $('mpPanelTitle').textContent = `Lobby code · ${lobbyText()}`;
   $('mpCode').textContent = NET.lobby;
@@ -2548,7 +2569,12 @@ function renderPlayers() {
     const d = document.createElement('div'), i = document.createElement('i'), sp = document.createElement('span');
     i.style.background = '#' + PLAYER_COLORS[r.color].toString(16).padStart(6, '0');
     sp.textContent = r.name + (r.id === NET.hostId ? ' · host' : '');
-    d.append(i, sp); return d;
+    d.append(i, sp);
+    if (NET.isHost && r.id !== NET.selfId) {
+      const k = document.createElement('button'); k.className = 'kick'; k.textContent = 'Kick';
+      k.dataset.kick = r.id; k.dataset.name = r.name; d.append(k);
+    }
+    return d;
   }));
 }
 
@@ -2656,7 +2682,9 @@ function cutPlausible(pr, i, maxTier) {
 // the co-op host's ledger: money for other players' sales comes out of the value of grass they were seen cutting
 function claimPool(v) { const ok = Math.max(0, Math.min(v, NET.pool + 1e-9)); NET.pool = Math.max(0, NET.pool - ok); return ok; }
 const bagWorth = () => bagCap() * TIERS[Math.min(6, coopMaxTier())].value * sellMult();
-function wireNet(tx) {
+function wireNet(tx0) {
+  // nothing from a kicked player gets through
+  const tx = { on: (topic, fn) => tx0.on(topic, (d, from) => { if (!NET.blocked.has(from)) fn(d, from); }) };
   tx.on('cut', (d, from) => {
     if (!Array.isArray(d?.c) || !rateOk(from, Math.ceil(d.c.length / 20))) return;
     const pr = presOf(from); if (!pr) return;
@@ -2694,12 +2722,18 @@ function wireNet(tx) {
   });
   tx.on('sack', (d, from) => {
     if (!NET.coop || !d || !rateOk(from, 3)) return;
+    if (d.op === 'add') {
+      // ignore drops that break the bag limits (too small, too fast, too many)
+      const now = performance.now(), last = NET.lastSackFrom.get(from) || -1e9;
+      if (!d.s || !(+d.s.n >= MIN_DROP) || now - last < 1200 || S.sacks.length >= MAX_SACKS || S.sacks.filter(o => o.by === from).length >= MAX_SACKS_EACH) return;
+      NET.lastSackFrom.set(from, now);
+    }
     if (d.op === 'add' && d.s && isFinite(d.s.x) && isFinite(d.s.z) && Math.hypot(d.s.x, d.s.z) < R_MAP) {
       // a dropped bag holds at most a full bag of the best grass; on the host it can't be worth more than the ledger backs
       const n = Math.max(0, Math.min(+d.s.n || 0, BAG_LEVELS[BAG_LEVELS.length - 1]));
       let v = Math.max(0, Math.min(+d.s.v || 0, n * TIERS[6].value));
       if (NET.isHost) v = Math.min(v, NET.pool);
-      addSack({ id: String(d.s.id).slice(0, 12), x: d.s.x, z: d.s.z, n, v, o: NET.isHost ? 1 : 0 }, true);
+      addSack({ id: String(d.s.id).slice(0, 12), x: d.s.x, z: d.s.z, n, v, o: NET.isHost ? 1 : 0, by: from }, true);
     }
     if (d.op === 'del') {
       const s = S.sacks.find(o => o.id === d.id); if (!s) return;
@@ -2709,6 +2743,13 @@ function wireNet(tx) {
     }
   });
   tx.on('note', (d, from) => { if (from === NET.hostId && typeof d?.msg === 'string') toast(d.msg.slice(0, 80), '', 2.4); });
+  // the host can close the lobby for everyone, or remove one player
+  tx.on('close', (d, from) => { if (from === NET.hostId) leaveLobby('The host closed the lobby.'); });
+  tx.on('kick', (d, from) => {
+    if (from !== NET.hostId || typeof d?.id !== 'string') return;
+    if (d.id === NET.selfId) leaveLobby('The host removed you from the lobby.');
+    else blockPlayer(d.id);
+  });
 }
 
 // where I am, how fast I'm moving, what I'm holding, the robots I run, and (as host) the clock.
@@ -2723,7 +2764,7 @@ function sendPresence() {
 setInterval(sendPresence, 50);
 function netTick(dt) {
   if (!NET.on) return;
-  NET.peers = NET.tx.peers().filter(p => p.pres && typeof p.pres === 'object');
+  NET.peers = NET.tx.peers().filter(p => p.pres && typeof p.pres === 'object' && !NET.blocked.has(p.id));
   // the earliest arrival is host
   let hostId = NET.selfId, hostSince = NET.since;
   for (const p of NET.peers) { const s = +p.pres.s || Infinity; if (s < hostSince || (s === hostSince && p.id < hostId)) { hostSince = s; hostId = p.id; } }
@@ -2820,8 +2861,22 @@ async function enterLobby(tx, code, nick, mode) {
   mpStatus('');
   startPlaying();
 }
+function blockPlayer(id) {
+  NET.blocked.add(id);
+  for (const s of [...S.sacks]) if (s.by === id) takeSack(s, true); // their bags disappear for everyone
+  renderPlayers();
+}
+function leaveLobby(note) {
+  save();
+  try { if (note) sessionStorage.setItem('cutabove_note', note); } catch (e) {}
+  const tx = NET.tx; NET.on = false; // stop sending anything before the connection closes
+  try { tx._pres = null; tx.leave(); } catch (e) {}
+  if (note) { state = 'paused'; toast(note, 'warn', 3); setTimeout(() => location.reload(), 1800); } else location.reload();
+}
 // the lobby form
 {
+  // why the last lobby ended, if it was the host's doing
+  try { const n = sessionStorage.getItem('cutabove_note'); if (n) { sessionStorage.removeItem('cutabove_note'); setTimeout(() => mpStatus(n, true), 0); } } catch (e) {}
   const nameIn = $('mpName'), codeIn = $('mpCodeIn');
   nameIn.value = settings.name || '';
   let mode = 'coop';
@@ -2843,7 +2898,17 @@ async function enterLobby(tx, code, nick, mode) {
     const done = msg => { $('mpCopied').textContent = msg; setTimeout(() => $('mpCopied').textContent = '', 2000); };
     navigator.clipboard?.writeText(NET.lobby).then(() => done('Copied'), () => { getSelection().selectAllChildren($('mpCode')); done('Press Ctrl+C to copy'); }) ?? (getSelection().selectAllChildren($('mpCode')), done('Press Ctrl+C to copy'));
   });
-  $('mpLeave').addEventListener('click', () => { save(); try { NET.tx.leave(); } catch (e) {} location.reload(); });
+  $('mpLeave').addEventListener('click', () => leaveLobby());
+  let closeArmed = false;
+  $('mpClose').addEventListener('click', () => {
+    if (!closeArmed) { closeArmed = true; $('mpClose').textContent = 'Click again to close it for everyone'; setTimeout(() => { closeArmed = false; $('mpClose').textContent = 'Close lobby'; }, 3000); return; }
+    netSend('close', {}); setTimeout(() => leaveLobby(), 400); // give the message a moment to go out
+  });
+  $('mpPlayers').addEventListener('click', e => {
+    const b = e.target.closest('button[data-kick]'); if (!b || !NET.isHost) return;
+    netSend('kick', { id: b.dataset.kick }); blockPlayer(b.dataset.kick);
+    toast(`Removed ${b.dataset.name} from the lobby`, '', 2);
+  });
 }
 
 // ===================== GAME LOOP =====================
