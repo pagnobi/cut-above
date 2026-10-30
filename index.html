@@ -206,7 +206,6 @@ body { background: #0f1a0d; color: var(--ink); font-family: var(--body); font-si
   <div class="tag num" id="mapTag"></div>
   <div class="tag num" id="fps" hidden></div>
   <div class="tag" id="robotTag"></div>
-  <div class="tag" id="lobbyTag" hidden></div>
 </div>
 <div class="hud" id="compass" hidden>
   <div class="pill">
@@ -2310,15 +2309,14 @@ async function persistLobby() {
 
 function setMode(m) { NET.mode = m; NET.coop = m === 'coop'; }
 function lobbyText() {
-  const n = NET.peers.length + 1;
-  const links = NET.tx?.links?.(), via = links?.relayed ? ` · ${links.relayed} via relay` : '';
-  if (n === 1) return `Lobby code ${NET.lobby} · ${NET.coop ? 'Co-op' : 'Own wallets'} · waiting for players to join`;
-  return `Lobby code ${NET.lobby} · ${NET.coop ? 'Co-op' : 'Own wallets'} · ${n} players${via}${NET.isHost ? ' · you host' : ''}`;
+  const n = NET.peers.length + 1, links = NET.tx?.links?.();
+  const who = n === 1 ? 'waiting for friends to join' : `${n} players${links?.relayed ? ` (${links.relayed} via relay)` : ''}`;
+  return `${NET.coop ? 'co-op, one shared wallet' : 'shared map, own wallets'} · ${who}`;
 }
 function renderPlayers() {
   $('mpPanel').hidden = !NET.on; $('mpLeave').hidden = !NET.on;
   if (!NET.on) return;
-  $('mpPanelTitle').textContent = `Lobby code · ${NET.coop ? 'co-op, one shared wallet' : 'shared map, own wallets'} · friends join with this code`;
+  $('mpPanelTitle').textContent = `Lobby code · ${lobbyText()}`;
   $('mpCode').textContent = NET.lobby;
   const rows = [{ id: NET.selfId, name: NET.name + ' (you)', color: NET.color }, ...NET.peers.map(p => ({ id: p.id, name: String(p.pres.n || 'Player').slice(0, 16), color: (+p.pres.c || 0) % PLAYER_COLORS.length }))];
   $('mpPlayers').replaceChildren(...rows.map(r => {
@@ -2540,7 +2538,6 @@ async function enterLobby(tx, code, nick, mode) {
   const stored = await tx.loadSnap();
   if (stored) await applySnap(stored, false);
   syncRobotSims(); syncTool(); updateLOD(1, Infinity);
-  $('lobbyTag').hidden = false;
   mpStatus('');
   startPlaying();
 }
@@ -2723,7 +2720,6 @@ function frame(now) {
   setText('goal', nextGoal());
   const totalCut = cutCount.reduce((a, b) => a + b, 0), total = tierCount.reduce((a, b) => a + b, 0);
   setText('mapTag', `Map ${(totalCut / total * 100).toFixed(1)}% · ${[1, 2, 3, 4, 5, 6].filter(t => cutCount[t] === tierCount[t]).length}/6 zones${S.sacks.length ? ` · ${S.sacks.length} bag${S.sacks.length > 1 ? 's' : ''} on the ground` : ''}`);
-  if (NET.on) setText('lobbyTag', lobbyText());
   setText('robotTag', robots.length ? `${robots.length} robot${robots.length > 1 ? 's' : ''} ${robots.every(r => r.idle) ? 'parked' : 'working'}` : '');
   if (toastTimer > 0) { toastTimer -= dt; if (toastTimer <= 0) $('toast').innerHTML = ''; }
   mmTimer -= dt; if (mmTimer <= 0) { mmTimer = 0.3; drawMinimap(); }
@@ -2785,7 +2781,8 @@ $('resetBtn').addEventListener('click', () => {
 addEventListener('keydown', e => {
   if (e.target.closest?.('input')) return;
   if (e.code === 'Escape' && shopOpen) closeShop();
-  else if (e.code === 'Escape' && state === 'play' && (isTouch || !canLock)) pause();
+  else if (e.code === 'Escape' && state === 'play') { if (document.pointerLockElement) document.exitPointerLock(); pause(); }
+  else if (e.code === 'Escape' && state === 'paused' && !$('pauseScreen').hidden) startPlaying();
   else if ((e.code === 'Enter' || e.code === 'Space') && state !== 'play' && !shopOpen) { e.preventDefault(); startPlaying(); }
 });
 if (isTouch) {
