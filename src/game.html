@@ -107,6 +107,17 @@ body { background: #0f1a0d; color: var(--ink); font-family: var(--body); font-si
 .mpRow input { font: 600 16px var(--body); color: var(--ink); background: rgba(0,0,0,.3); border: 1px solid var(--line); border-radius: 8px; padding: 9px 10px; width: 100%; box-sizing: border-box; }
 .mpRow input:focus-visible { outline: 2px solid var(--cash); outline-offset: 1px; }
 .mpHint { font-size: 14px !important; }
+.menuCard { max-width: 520px; }
+.menuBtns { display: grid; grid-template-columns: repeat(auto-fit, minmax(170px, 1fr)); gap: 10px; }
+.btn.alt { background: var(--cash); color: #10200b; box-shadow: 0 4px 0 #3c6d1e; }
+.btn.alt:active { box-shadow: 0 2px 0 #3c6d1e; }
+.joinRow { display: flex; gap: 10px; align-items: end; flex-wrap: wrap; }
+.joinRow label { display: grid; gap: 4px; font-size: 13px; color: var(--ink-dim); flex: 1 1 180px; min-width: 0; }
+.joinRow input { font-weight: 600; color: var(--ink); background: rgba(0,0,0,.3); border: 1px solid var(--line); border-radius: 8px; padding: 9px 10px; width: 100%; box-sizing: border-box; }
+.bigCode { font-family: var(--display); font-size: 44px; letter-spacing: .18em; color: var(--safety); }
+.roomRow { align-items: center; }
+#roomStatus { color: var(--ink-dim); font-weight: 600; }
+#roomMode .tab[disabled] { cursor: default; opacity: .75; }
 .mpCols { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 14px; }
 .mpCol { display: grid; gap: 8px; align-content: start; padding: 12px; border: 1px solid var(--line); border-radius: 10px; }
 .mpHead { font-family: var(--display); font-size: 14px !important; color: var(--ink) !important; letter-spacing: .03em; }
@@ -226,39 +237,38 @@ body { background: #0f1a0d; color: var(--ink); font-family: var(--body); font-si
 </div>
 
 <div class="overlay" id="startScreen">
-  <div class="card">
+  <div class="card menuCard">
     <h1 class="title">Cut Above<small>Mow every blade on the map</small></h1>
-    <p>Cut grass into your bag and haul it to a drop-off for cash. When it fills up, drop the bag where you stand and keep going, or put your mower down and carry it in yourself. Tougher grass grows farther out. Mow all six zones to 100%.</p>
-    <div class="keys" id="startKeys">
-      <kbd>WASD</kbd><span>Walk (Shift to sprint)</span>
-      <kbd>Hold click</kbd><span>Cut the grass inside the box</span>
-      <kbd>E</kbd><span>Pick up tools and bags, get on mowers, open the shop on a pad</span>
-      <kbd>G</kbd><span>Put down what you're holding</span>
-      <kbd>B</kbd><span>Drop your bag here and start a fresh one</span>
-      <kbd>1, 2, 3…</kbd><span>Switch pocket tools, or find big gear you left behind</span>
-      <kbd>Tab</kbd><span>Zone progress, trophies, graphics</span>
+    <p>Cut grass into your bag and haul it to a drop-off for cash. Better gear cuts tougher grass farther out. Mow all six zones to 100%, on your own or with friends.</p>
+    <div class="mpRow"><label for="mpName">Your name<input id="mpName" maxlength="16" autocomplete="off" placeholder="Mower"></label></div>
+    <div class="menuBtns">
+      <button class="btn" id="startBtn">Play solo</button>
+      <button class="btn alt" id="mpHost">Host a game</button>
     </div>
-    <div class="row"><button class="btn" id="startBtn">Play solo</button></div>
-    <div class="mp" id="mpBox">
-      <p class="sectionLabel">Multiplayer</p>
-      <div class="mpRow"><label for="mpName">Your name<input id="mpName" maxlength="16" autocomplete="off"></label></div>
-      <div class="mpCols">
-        <div class="mpCol">
-          <p class="mpHead">Host a lobby</p>
-          <div class="tabs" id="mpMode" role="group" aria-label="Lobby mode">
-            <button class="tab" data-mode="coop" aria-selected="true">Co-op · one shared wallet</button>
-            <button class="tab" data-mode="own" aria-selected="false">Shared map · own wallets</button>
-          </div>
-          <div class="row"><button class="btn ghost" id="mpHost">Host new lobby</button><button class="btn ghost" id="mpResume" hidden></button></div>
-        </div>
-        <div class="mpCol">
-          <p class="mpHead">Join a lobby</p>
-          <div class="mpRow"><label for="mpCodeIn">Lobby code<input id="mpCodeIn" class="codeIn" maxlength="7" placeholder="K7M2Q" autocomplete="off" autocapitalize="characters" spellcheck="false"></label></div>
-          <div class="row"><button class="btn ghost" id="mpJoin">Join</button></div>
-        </div>
-      </div>
-      <span id="mpStatus" role="status"></span>
+    <button class="btn ghost" id="mpResume" hidden></button>
+    <div class="joinRow">
+      <label for="mpCodeIn">Join a game<input id="mpCodeIn" class="codeIn" maxlength="7" placeholder="K7M2Q" autocomplete="off" autocapitalize="characters" spellcheck="false"></label>
+      <button class="btn alt" id="mpJoin">Join</button>
     </div>
+    <span id="mpStatus" role="status"></span>
+    <p class="mpHint">Controls are in the Esc menu once you're playing.</p>
+  </div>
+</div>
+
+<div class="overlay" id="roomScreen" hidden>
+  <div class="card">
+    <h2 class="title" style="font-size:40px">Lobby</h2>
+    <p class="sectionLabel">Lobby code</p>
+    <div class="codeBox"><span id="roomCode" class="bigCode"></span><button class="btn ghost" id="roomCopy">Copy code</button><span id="roomCopied" role="status"></span></div>
+    <p class="mpHint" id="roomHint">Friends type this code under Join a game on the main menu.</p>
+    <p class="sectionLabel">Mode</p>
+    <div class="tabs" id="roomMode" role="group" aria-label="Lobby mode">
+      <button class="tab" data-mode="coop">Co-op · one shared wallet</button>
+      <button class="tab" data-mode="own">Shared map · own wallets</button>
+    </div>
+    <p class="sectionLabel" id="roomCount">Players</p>
+    <div class="players" id="roomPlayers"></div>
+    <div class="row roomRow"><button class="btn" id="roomStart">Start game</button><button class="btn ghost" id="roomLeave">Leave</button><span id="roomStatus" role="status"></span></div>
   </div>
 </div>
 
@@ -311,6 +321,7 @@ body { background: #0f1a0d; color: var(--ink); font-family: var(--body); font-si
     </div>
     <div class="row">
       <button class="btn" id="resumeBtn">Resume</button>
+      <button class="btn ghost" id="menuBtn">Main menu</button>
       <button class="btn ghost" id="resetBtn">Reset progress</button>
       <button class="btn ghost" id="mpLeave" hidden>Leave lobby</button>
       <button class="btn ghost" id="mpClose" hidden>Close lobby</button>
@@ -1935,7 +1946,7 @@ if (isTouch) {
   hold('tDrop', () => putDown());
   hold('tBag', () => dropBag());
   hold('tTool', () => { const owned = TOOLS.filter(t => t.pocket && S.owned[t.id]); const k = owned.findIndex(t => t.id === S.pocket); selectTool(owned[(k + 1) % owned.length].id); });
-  document.getElementById('pauseKeys').innerHTML = document.getElementById('startKeys').innerHTML = '<kbd>Left stick</kbd><span>Walk</span><kbd>Drag right</kbd><span>Look around</span><kbd>CUT</kbd><span>Hold to cut the grass in the box</span><kbd>USE</kbd><span>Pick up, get on, or open the shop</span><kbd>DROP</kbd><span>Put down what you\'re holding</span><kbd>BAG</kbd><span>Drop your bag here</span><kbd>II</kbd><span>Progress and trophies</span>';
+  document.getElementById('pauseKeys').innerHTML = '<kbd>Left stick</kbd><span>Walk</span><kbd>Drag right</kbd><span>Look around</span><kbd>CUT</kbd><span>Hold to cut the grass in the box</span><kbd>USE</kbd><span>Pick up, get on, or open the shop</span><kbd>DROP</kbd><span>Put down what you\'re holding</span><kbd>BAG</kbd><span>Drop your bag here</span><kbd>II</kbd><span>Progress and trophies</span>';
 }
 
 // ===================== HOLDING, DROPPING, CARRYING =====================
@@ -2318,7 +2329,7 @@ function findHunt() {
 // `?net=local` links tabs in one browser together (for testing).
 // The oldest player in the lobby is the host: in co-op it owns the shared wallet and runs the robots.
 const NET = { on: false, lobby: '', mode: 'coop', coop: false, isHost: true, selfId: '', hostId: '', since: 0, name: '', color: 0, tx: null,
-  peers: [], known: new Set(), blocked: new Set(), lastSackFrom: new Map(), pool: 0, grace: 0, graceAt: 0, rate: new Map(), gotSnap: false, wantTimer: 0, snapSentAt: new Map(), outCuts: [], cutTimer: 0, presTimer: 0, econKey: '', econAt: 0, econBeat: 0, persistTimer: 8, persisting: false, snapIn: new Map(), reqSeq: 0, pending: new Map() };
+  phase: 'play', roomAt: 0, peers: [], known: new Set(), blocked: new Set(), lastSackFrom: new Map(), pool: 0, grace: 0, graceAt: 0, rate: new Map(), gotSnap: false, wantTimer: 0, snapSentAt: new Map(), outCuts: [], cutTimer: 0, presTimer: 0, econKey: '', econAt: 0, econBeat: 0, persistTimer: 8, persisting: false, snapIn: new Map(), reqSeq: 0, pending: new Map() };
 const PLAYER_COLORS = [0xe8742c, 0x3f8fe0, 0xd04a8a, 0x2fb07a, 0xf2c230, 0x9a6ae0, 0xe04a4a, 0x40c8d0];
 const lobbySlug = s => s.toLowerCase().trim().replace(/[^a-z0-9_.-]+/g, '-').replace(/^[^a-z0-9]+/, '').slice(0, 40) || 'lobby';
 const colorFor = id => { let h = 0; for (const ch of id) h = (h * 31 + ch.charCodeAt(0)) >>> 0; return h % PLAYER_COLORS.length; };
@@ -2553,12 +2564,15 @@ function lobbyText() {
   return `${NET.coop ? 'co-op, one shared wallet' : 'shared map, own wallets'} · ${who}`;
 }
 function renderPlayers() {
-  $('mpPanel').hidden = !NET.on; $('mpLeave').hidden = !NET.on; $('mpClose').hidden = !(NET.on && NET.isHost);
+  $('mpPanel').hidden = !NET.on; $('mpLeave').hidden = !NET.on; $('mpClose').hidden = !(NET.on && NET.isHost); $('menuBtn').hidden = NET.on;
   if (!NET.on) return;
   $('mpPanelTitle').textContent = `Lobby code · ${lobbyText()}`;
   $('mpCode').textContent = NET.lobby;
+  playerList($('mpPlayers'));
+}
+function playerList(el) {
   const rows = [{ id: NET.selfId, name: NET.name + ' (you)', color: NET.color }, ...NET.peers.map(p => ({ id: p.id, name: String(p.pres.n || 'Player').slice(0, 16), color: (+p.pres.c || 0) % PLAYER_COLORS.length }))];
-  $('mpPlayers').replaceChildren(...rows.map(r => {
+  el.replaceChildren(...rows.map(r => {
     const d = document.createElement('div'), i = document.createElement('i'), sp = document.createElement('span');
     i.style.background = '#' + PLAYER_COLORS[r.color].toString(16).padStart(6, '0');
     sp.textContent = r.name + (r.id === NET.hostId ? ' · host' : '');
@@ -2749,7 +2763,7 @@ function wireNet(tx0) {
 // Sent 20 times a second on its own timer so a slow frame rate doesn't slow everyone else's view of you.
 function sendPresence() {
   if (!NET.on) return;
-  const pres = { n: NET.name, c: NET.color, s: NET.since, x: +P.x.toFixed(2), z: +P.z.toFixed(2), vx: +P.vx.toFixed(2), vz: +P.vz.toFixed(2), y: +P.yaw.toFixed(2), t: S.tool, k: S.carry.length, bv: +(S.bagValue + carryValue()).toFixed(2) };
+  const pres = { n: NET.name, c: NET.color, s: NET.since, x: +P.x.toFixed(2), z: +P.z.toFixed(2), vx: +P.vx.toFixed(2), vz: +P.vz.toFixed(2), y: +P.yaw.toFixed(2), t: S.tool, k: S.carry.length, ph: NET.phase, m: NET.mode, bv: +(S.bagValue + carryValue()).toFixed(2) };
   if (robots.length) pres.r = robots.slice(0, 40).map(r => [ROBOTS.indexOf(r.model), Math.round(r.x * 10), Math.round(r.z * 10), Math.round(r.h * 100)]);
   if (NET.isHost) pres.d = +S.dayT.toFixed(4);
   NET.tx.presence(pres);
@@ -2765,6 +2779,12 @@ function netTick(dt) {
   NET.hostId = hostId; NET.isHost = hostId === NET.selfId;
   if (wasHost !== NET.isHost && NET.coop) { syncRobotSims(); if (NET.isHost) { NET.grace = 2 * bagWorth(); toast('You are now hosting this lobby', '', 2.4); } }
   if (!NET.isHost) { const hp = NET.peers.find(p => p.id === hostId); if (typeof hp?.pres?.d === 'number') S.dayT = hp.pres.d % 1; }
+  // in the lobby room: follow the host's mode, start when the host starts, keep the room screen current
+  if (NET.phase === 'room') {
+    const hp = NET.peers.find(p => p.id === hostId)?.pres;
+    if (!NET.isHost && hp) { if ((hp.m === 'coop' || hp.m === 'own') && hp.m !== NET.mode) setMode(hp.m); if (hp.ph === 'play') beginPlay(); }
+    if (performance.now() - NET.roomAt > 400) { NET.roomAt = performance.now(); renderRoom(); }
+  }
   // the host hands every newcomer the lobby as it stands
   if (NET.coop && NET.isHost) { const now = performance.now(), w = bagWorth(); NET.grace = Math.min(2 * w, NET.grace + (now - (NET.graceAt || now)) / 600000 * w); NET.graceAt = now; }
   for (const p of NET.peers) if (!NET.known.has(p.id)) {
@@ -2812,8 +2832,7 @@ async function hostLobby(code, nick, mode) {
   mpStatus('Opening lobby ' + code + '…');
   const tx = await openTransport(code); if (!tx) return;
   settings.hosted = { code, mode }; saveSettings();
-  await enterLobby(tx, code, nick, mode);
-  toast(`Hosting lobby ${code} · friends join with this code`, 'good', 4);
+  await enterLobby(tx, code, nick, mode, 'room');
 }
 async function joinLobby(code, nick) {
   mpStatus('Looking for lobby ' + code + '…');
@@ -2823,10 +2842,12 @@ async function joinLobby(code, nick) {
   if (!tx.peers().length) { try { tx.leave(); } catch (e) {} mpStatus(`No one is hosting ${code} right now. Check the code, and make sure the host has the game open.`, true); return; }
   mpStatus(`Found lobby ${code}, loading the map…`);
   await new Promise(r => setTimeout(r, 30)); // let the message paint before the world rebuilds
-  await enterLobby(tx, code, nick, 'coop'); // the host's snapshot sets the real mode
-  toast(`Joined lobby ${code}`, 'good', 2.5);
+  // a game already under way (or a host on an older version, which doesn't say) is joined straight away
+  const started = tx.peers().some(p => p.pres && p.pres.ph !== 'room');
+  await enterLobby(tx, code, nick, 'coop', started ? 'play' : 'room'); // the host's snapshot sets the real mode
+  if (started) toast(`Joined lobby ${code}`, 'good', 2.5);
 }
-async function enterLobby(tx, code, nick, mode) {
+async function enterLobby(tx, code, nick, mode, phase = 'play') {
   const slug = lobbySlug(code);
   // swap the solo world for this lobby's
   save();
@@ -2852,10 +2873,35 @@ async function enterLobby(tx, code, nick, mode) {
   syncRobotSims(); syncTool(); updateLOD(1, Infinity);
   NET.grace = 2 * bagWorth();
   mpStatus('');
+  NET.phase = phase;
+  if (phase === 'play') startPlaying(); else showRoom();
+}
+function showRoom() {
+  $('startScreen').hidden = true; $('roomScreen').hidden = false;
+  if (document.pointerLockElement) document.exitPointerLock();
+  renderRoom();
+}
+function renderRoom() {
+  if ($('roomScreen').hidden) return;
+  $('roomCode').textContent = NET.lobby;
+  $('roomMode').querySelectorAll('button').forEach(b => { b.setAttribute('aria-selected', b.dataset.mode === NET.mode); b.disabled = !NET.isHost; });
+  const n = NET.peers.length + 1;
+  $('roomCount').textContent = `Players · ${n}`;
+  playerList($('roomPlayers'));
+  $('roomStart').hidden = !NET.isHost;
+  const host = NET.peers.find(p => p.id === NET.hostId)?.pres?.n;
+  $('roomStatus').textContent = NET.isHost ? (n === 1 ? 'Waiting for friends · you can start alone too' : '') : `Waiting for ${host ? String(host).slice(0, 16) : 'the host'} to start…`;
+}
+// everyone drops into the world when the host starts
+function beginPlay() {
+  if (NET.phase === 'play') return;
+  NET.phase = 'play';
+  $('roomScreen').hidden = true;
   startPlaying();
+  toast(NET.isHost ? `Game on · late friends can still join with ${NET.lobby}` : 'The host started the game', 'good', 3);
 }
 function blockPlayer(id) {
-  NET.blocked.add(id);
+  NET.blocked.add(id); renderRoom();
   for (const s of [...S.sacks]) if (s.by === id) takeSack(s, true); // their bags disappear for everyone
   renderPlayers();
 }
@@ -2872,12 +2918,10 @@ function leaveLobby(note) {
   try { const n = sessionStorage.getItem('cutabove_note'); if (n) { sessionStorage.removeItem('cutabove_note'); setTimeout(() => mpStatus(n, true), 0); } } catch (e) {}
   const nameIn = $('mpName'), codeIn = $('mpCodeIn');
   nameIn.value = settings.name || '';
-  let mode = 'coop';
   const resume = $('mpResume');
   if (settings.hosted?.code) { resume.hidden = false; resume.textContent = `Resume lobby ${settings.hosted.code}`; }
   const go = async fn => { if (mpBusy) return; mpBusy = true; settings.name = nameIn.value.trim(); saveSettings(); initAudio(); try { await fn(); } finally { mpBusy = false; } };
-  $('mpMode').addEventListener('click', e => { const b = e.target.closest('button[data-mode]'); if (!b) return; mode = b.dataset.mode; $('mpMode').querySelectorAll('button').forEach(x => x.setAttribute('aria-selected', x === b)); });
-  $('mpHost').addEventListener('click', () => go(() => hostLobby(newCode(), nameIn.value.trim(), mode)));
+  $('mpHost').addEventListener('click', () => go(() => hostLobby(newCode(), nameIn.value.trim(), 'coop')));
   resume.addEventListener('click', () => go(() => hostLobby(settings.hosted.code, nameIn.value.trim(), settings.hosted.mode || 'coop')));
   codeIn.addEventListener('input', () => { codeIn.value = cleanCode(codeIn.value); });
   const join = () => {
@@ -2892,6 +2936,21 @@ function leaveLobby(note) {
     navigator.clipboard?.writeText(NET.lobby).then(() => done('Copied'), () => { getSelection().selectAllChildren($('mpCode')); done('Press Ctrl+C to copy'); }) ?? (getSelection().selectAllChildren($('mpCode')), done('Press Ctrl+C to copy'));
   });
   $('mpLeave').addEventListener('click', () => leaveLobby());
+  $('menuBtn').addEventListener('click', () => { save(); location.reload(); });
+  $('roomStart').addEventListener('click', () => { if (NET.isHost) beginPlay(); });
+  $('roomLeave').addEventListener('click', () => { if (NET.isHost) { netSend('close', {}); setTimeout(() => leaveLobby(), 400); } else leaveLobby(); }); // a host leaving the room closes it
+  $('roomMode').addEventListener('click', e => {
+    const b = e.target.closest('button[data-mode]'); if (!b || !NET.isHost) return;
+    setMode(b.dataset.mode); if (settings.hosted) { settings.hosted.mode = NET.mode; saveSettings(); } renderRoom();
+  });
+  $('roomCopy').addEventListener('click', () => {
+    const done = msg => { $('roomCopied').textContent = msg; setTimeout(() => $('roomCopied').textContent = '', 2000); };
+    navigator.clipboard?.writeText(NET.lobby).then(() => done('Copied'), () => { getSelection().selectAllChildren($('roomCode')); done('Press Ctrl+C to copy'); }) ?? (getSelection().selectAllChildren($('roomCode')), done('Press Ctrl+C to copy'));
+  });
+  $('roomPlayers').addEventListener('click', e => {
+    const b = e.target.closest('button[data-kick]'); if (!b || !NET.isHost) return;
+    netSend('kick', { id: b.dataset.kick }); blockPlayer(b.dataset.kick); renderRoom();
+  });
   let closeArmed = false;
   $('mpClose').addEventListener('click', () => {
     if (!closeArmed) { closeArmed = true; $('mpClose').textContent = 'Click again to close it for everyone'; setTimeout(() => { closeArmed = false; $('mpClose').textContent = 'Close lobby'; }, 3000); return; }
@@ -3129,6 +3188,7 @@ $('resetBtn').addEventListener('click', () => {
 });
 addEventListener('keydown', e => {
   if (e.target.closest?.('input:not([type=range])')) return; // typing a name or code isn't playing
+  if (!$('roomScreen').hidden) return; // waiting in the lobby room
   if (e.code === 'Escape' && shopOpen) closeShop();
   else if (e.code === 'Escape' && state === 'play') { if (document.pointerLockElement) document.exitPointerLock(); pause(); }
   else if (e.code === 'Escape' && state === 'paused' && !$('pauseScreen').hidden) startPlaying();
