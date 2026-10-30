@@ -111,6 +111,12 @@ body { background: #0f1a0d; color: var(--ink); font-family: var(--body); font-si
 .mpRow input { font: 600 16px var(--body); color: var(--ink); background: rgba(0,0,0,.3); border: 1px solid var(--line); border-radius: 8px; padding: 9px 10px; width: 100%; box-sizing: border-box; }
 .mpRow input:focus-visible { outline: 2px solid var(--cash); outline-offset: 1px; }
 .mpHint { font-size: 14px !important; }
+.mpCols { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 14px; }
+.mpCol { display: grid; gap: 8px; align-content: start; padding: 12px; border: 1px solid var(--line); border-radius: 10px; }
+.mpHead { font-family: var(--display); font-size: 14px !important; color: var(--ink) !important; letter-spacing: .03em; }
+.codeIn { font-family: var(--display) !important; font-size: 22px !important; letter-spacing: .2em; text-transform: uppercase; }
+.codeBox { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
+#mpCode { font-family: var(--display); font-size: 30px; letter-spacing: .18em; color: var(--safety); }
 #mpStatus { align-self: center; font-weight: 600; color: var(--ink-dim); }
 #mpStatus.err { color: var(--stop); }
 .players { display: grid; gap: 4px; }
@@ -237,16 +243,23 @@ body { background: #0f1a0d; color: var(--ink); font-family: var(--body); font-si
     <div class="row"><button class="btn" id="startBtn">Play solo</button></div>
     <div class="mp" id="mpBox">
       <p class="sectionLabel">Multiplayer</p>
-      <div class="mpRow">
-        <label for="mpLobby">Lobby name<input id="mpLobby" maxlength="32" placeholder="backyard-crew" autocomplete="off"></label>
-        <label for="mpName">Your name<input id="mpName" maxlength="16" autocomplete="off"></label>
+      <div class="mpRow"><label for="mpName">Your name<input id="mpName" maxlength="16" autocomplete="off"></label></div>
+      <div class="mpCols">
+        <div class="mpCol">
+          <p class="mpHead">Host a lobby</p>
+          <div class="tabs" id="mpMode" role="group" aria-label="Lobby mode">
+            <button class="tab" data-mode="coop" aria-selected="true">Co-op · one shared wallet</button>
+            <button class="tab" data-mode="own" aria-selected="false">Shared map · own wallets</button>
+          </div>
+          <div class="row"><button class="btn ghost" id="mpHost">Host new lobby</button><button class="btn ghost" id="mpResume" hidden></button></div>
+        </div>
+        <div class="mpCol">
+          <p class="mpHead">Join a lobby</p>
+          <div class="mpRow"><label for="mpCodeIn">Lobby code<input id="mpCodeIn" class="codeIn" maxlength="7" placeholder="K7M2Q" autocomplete="off" autocapitalize="characters" spellcheck="false"></label></div>
+          <div class="row"><button class="btn ghost" id="mpJoin">Join</button></div>
+        </div>
       </div>
-      <div class="tabs" id="mpMode" role="group" aria-label="Lobby mode">
-        <button class="tab" data-mode="coop" aria-selected="true">Co-op · one shared wallet</button>
-        <button class="tab" data-mode="own" aria-selected="false">Shared map · own wallets</button>
-      </div>
-      <p class="mpHint">Everyone in a lobby mows the same map. The mode is set by whoever creates the lobby; joining an existing lobby uses its mode.</p>
-      <div class="row"><button class="btn ghost" id="mpJoin">Join or create lobby</button><span id="mpStatus" role="status"></span></div>
+      <span id="mpStatus" role="status"></span>
     </div>
   </div>
 </div>
@@ -258,7 +271,7 @@ body { background: #0f1a0d; color: var(--ink); font-family: var(--body); font-si
     <table class="zones num" id="zoneTable"></table>
     <p class="sectionLabel">Trophies</p>
     <div class="achList" id="achList"></div>
-    <div id="mpPanel" hidden><p class="sectionLabel" id="mpPanelTitle">Lobby</p><div class="players" id="mpPlayers"></div></div>
+    <div id="mpPanel" hidden><p class="sectionLabel" id="mpPanelTitle">Lobby</p><div class="codeBox"><span id="mpCode"></span><button class="btn ghost" id="mpCopy">Copy code</button><span id="mpCopied" role="status"></span></div><div class="players" id="mpPlayers"></div></div>
     <p class="sectionLabel">Graphics</p>
     <div class="tabs" id="qualityRow"></div>
     <p class="sectionLabel">Controls</p>
@@ -2286,13 +2299,14 @@ function setMode(m) { NET.mode = m; NET.coop = m === 'coop'; }
 function lobbyText() {
   const n = NET.peers.length + 1;
   const links = NET.tx?.links?.(), via = links?.relayed ? ` · ${links.relayed} via relay` : '';
-  if (n === 1) return `Lobby ${NET.lobby} · ${NET.coop ? 'Co-op' : 'Own wallets'} · waiting for players to join`;
-  return `Lobby ${NET.lobby} · ${NET.coop ? 'Co-op' : 'Own wallets'} · ${n} players${via}${NET.isHost ? ' · you host' : ''}`;
+  if (n === 1) return `Lobby code ${NET.lobby} · ${NET.coop ? 'Co-op' : 'Own wallets'} · waiting for players to join`;
+  return `Lobby code ${NET.lobby} · ${NET.coop ? 'Co-op' : 'Own wallets'} · ${n} players${via}${NET.isHost ? ' · you host' : ''}`;
 }
 function renderPlayers() {
   $('mpPanel').hidden = !NET.on; $('mpLeave').hidden = !NET.on;
   if (!NET.on) return;
-  $('mpPanelTitle').textContent = `Lobby ${NET.lobby} · ${NET.coop ? 'co-op, one shared wallet' : 'shared map, own wallets'}`;
+  $('mpPanelTitle').textContent = `Lobby code · ${NET.coop ? 'co-op, one shared wallet' : 'shared map, own wallets'} · friends join with this code`;
+  $('mpCode').textContent = NET.lobby;
   const rows = [{ id: NET.selfId, name: NET.name + ' (you)', color: NET.color }, ...NET.peers.map(p => ({ id: p.id, name: String(p.pres.n || 'Player').slice(0, 16), color: (+p.pres.c || 0) % PLAYER_COLORS.length }))];
   $('mpPlayers').replaceChildren(...rows.map(r => {
     const d = document.createElement('div'), i = document.createElement('i'), sp = document.createElement('span');
@@ -2447,16 +2461,42 @@ function netTick(dt) {
   updateAvatars(dt);
 }
 
-async function enterLobby(lobbyName, nick, mode) {
-  const slug = lobbySlug(lobbyName), kind = netKind();
-  const status = (msg, err) => { $('mpStatus').textContent = msg; $('mpStatus').className = err ? 'err' : ''; };
-  status('Connecting…');
+// lobby codes: five characters, no look-alikes (0/O, 1/I/L)
+const CODE_CHARS = 'ABCDEFGHJKMNPQRSTUVWXYZ23456789';
+const newCode = () => Array.from({ length: 5 }, () => CODE_CHARS[Math.floor(Math.random() * CODE_CHARS.length)]).join('');
+const cleanCode = s => s.toUpperCase().replace(/[^A-Z0-9]/g, '').slice(0, 7);
+const mpStatus = (msg, err) => { $('mpStatus').textContent = msg; $('mpStatus').className = err ? 'err' : ''; };
+let mpBusy = false;
+async function openTransport(code) {
+  const slug = lobbySlug(code), kind = netKind();
   let tx = null;
   try { tx = kind === 'claude' ? await makeClaudeTransport(slug) : kind === 'local' ? makeLocalTransport(slug) : await makeP2PTransport(slug); } catch (e) { tx = null; }
-  if (!tx) { status(kind === 'claude' ? 'Multiplayer isn\'t available in this view. Open the game on claude.ai while signed in.' : 'Couldn\'t reach the multiplayer relays. Check your connection and try again.', true); return; }
+  if (!tx) mpStatus(kind === 'claude' ? 'Multiplayer isn\'t available in this view. Open the game on claude.ai while signed in.' : 'Couldn\'t reach the multiplayer relays. Check your connection and try again.', true);
+  return tx;
+}
+async function hostLobby(code, nick, mode) {
+  mpStatus('Opening lobby ' + code + '…');
+  const tx = await openTransport(code); if (!tx) return;
+  settings.hosted = { code, mode }; saveSettings();
+  await enterLobby(tx, code, nick, mode);
+  toast(`Hosting lobby ${code} · friends join with this code`, 'good', 4);
+}
+async function joinLobby(code, nick) {
+  mpStatus('Looking for lobby ' + code + '…');
+  const tx = await openTransport(code); if (!tx) return;
+  // wait for the host (or anyone already playing) to show up before leaving solo play
+  for (let t = 0; t < 40 && !tx.peers().length; t++) { await new Promise(r => setTimeout(r, 500)); if (t % 2) mpStatus(`Looking for lobby ${code}… ${Math.round((t + 1) / 2)}s`); }
+  if (!tx.peers().length) { try { tx.leave(); } catch (e) {} mpStatus(`No one is hosting ${code} right now. Check the code, and make sure the host has the game open.`, true); return; }
+  mpStatus(`Found lobby ${code}, loading the map…`);
+  await new Promise(r => setTimeout(r, 30)); // let the message paint before the world rebuilds
+  await enterLobby(tx, code, nick, 'coop'); // the host's snapshot sets the real mode
+  toast(`Joined lobby ${code}`, 'good', 2.5);
+}
+async function enterLobby(tx, code, nick, mode) {
+  const slug = lobbySlug(code);
   // swap the solo world for this lobby's
   save();
-  NET.tx = tx; NET.on = true; NET.lobby = slug; NET.selfId = tx.selfId; NET.since = Date.now();
+  NET.tx = tx; NET.on = true; NET.lobby = code; NET.selfId = tx.selfId; NET.since = Date.now();
   NET.name = (nick || tx.profileName || 'Mower').slice(0, 16); NET.color = colorFor(NET.selfId);
   setMode(mode);
   saveKey = 'cutabove_mp_' + slug;
@@ -2477,20 +2517,31 @@ async function enterLobby(lobbyName, nick, mode) {
   if (stored) await applySnap(stored, false);
   syncRobotSims(); syncTool(); updateLOD(1, Infinity);
   $('lobbyTag').hidden = false;
-  status('');
+  mpStatus('');
   startPlaying();
-  toast(`Joined lobby ${slug}`, 'good', 2.5);
 }
 // the lobby form
 {
-  const nameIn = $('mpName'), lobbyIn = $('mpLobby');
-  nameIn.value = settings.name || ''; lobbyIn.value = settings.lobby || '';
+  const nameIn = $('mpName'), codeIn = $('mpCodeIn');
+  nameIn.value = settings.name || '';
   let mode = 'coop';
+  const resume = $('mpResume');
+  if (settings.hosted?.code) { resume.hidden = false; resume.textContent = `Resume lobby ${settings.hosted.code}`; }
+  const go = async fn => { if (mpBusy) return; mpBusy = true; settings.name = nameIn.value.trim(); saveSettings(); initAudio(); try { await fn(); } finally { mpBusy = false; } };
   $('mpMode').addEventListener('click', e => { const b = e.target.closest('button[data-mode]'); if (!b) return; mode = b.dataset.mode; $('mpMode').querySelectorAll('button').forEach(x => x.setAttribute('aria-selected', x === b)); });
-  $('mpJoin').addEventListener('click', () => {
-    if (!lobbyIn.value.trim()) { $('mpStatus').textContent = 'Type a lobby name your friends will use too.'; $('mpStatus').className = 'err'; lobbyIn.focus(); return; }
-    settings.name = nameIn.value.trim(); settings.lobby = lobbyIn.value.trim(); saveSettings();
-    initAudio(); enterLobby(lobbyIn.value, nameIn.value.trim(), mode);
+  $('mpHost').addEventListener('click', () => go(() => hostLobby(newCode(), nameIn.value.trim(), mode)));
+  resume.addEventListener('click', () => go(() => hostLobby(settings.hosted.code, nameIn.value.trim(), settings.hosted.mode || 'coop')));
+  codeIn.addEventListener('input', () => { codeIn.value = cleanCode(codeIn.value); });
+  const join = () => {
+    const code = cleanCode(codeIn.value);
+    if (code.length < 4) { mpStatus('Type the lobby code your host gave you.', true); codeIn.focus(); return; }
+    go(() => joinLobby(code, nameIn.value.trim()));
+  };
+  $('mpJoin').addEventListener('click', join);
+  codeIn.addEventListener('keydown', e => { if (e.key === 'Enter') join(); });
+  $('mpCopy').addEventListener('click', () => {
+    const done = msg => { $('mpCopied').textContent = msg; setTimeout(() => $('mpCopied').textContent = '', 2000); };
+    navigator.clipboard?.writeText(NET.lobby).then(() => done('Copied'), () => { getSelection().selectAllChildren($('mpCode')); done('Press Ctrl+C to copy'); }) ?? (getSelection().selectAllChildren($('mpCode')), done('Press Ctrl+C to copy'));
   });
   $('mpLeave').addEventListener('click', () => { save(); try { NET.tx.leave(); } catch (e) {} location.reload(); });
 }
@@ -2738,5 +2789,5 @@ function start(data) {
 }
 window.claude?.hot?.snapshot?.(() => { S.cutBits = encodeCut(); S.gridSig = gridSig; return { save: S }; });
 window.claude?.hot?.ready ? window.claude.hot.ready(start) : start(window.claude?.hot?.data ?? {});
-window.__game = { NET, enterLobby, robots, get S() { return S; }, P, get state() { return state; }, keys, setMouse: v => mouseDown = v, cutAt, TIERS, tierCount, cutCount, ZONE_NEED, save, findTarget, settings, applyQuality, triCount, fpsMon, syncTool, spawnToolMesh, useAction, putDown, dropBag, selectTool, addRobot };
+window.__game = { NET, hostLobby, joinLobby, robots, get S() { return S; }, P, get state() { return state; }, keys, setMouse: v => mouseDown = v, cutAt, TIERS, tierCount, cutCount, ZONE_NEED, save, findTarget, settings, applyQuality, triCount, fpsMon, syncTool, spawnToolMesh, useAction, putDown, dropBag, selectTool, addRobot };
 </script>
