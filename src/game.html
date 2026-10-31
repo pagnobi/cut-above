@@ -1389,7 +1389,7 @@ const RL = { H: 0.85, cx: HOUSE.x - 0.4, cz: HOUSE.z + 0.6, wx: HOUSE.x - 1.3, w
 RL.areas = [['red', -0.65, -0.1], ['green', -0.07, 0.48], ['black', 0.51, 1.06]].map(([c, a, b]) =>
   ({ c, x0: HOUSE.x + a, x1: HOUSE.x + b, z0: RL.cz - 0.48, z1: RL.cz + 0.48, x: HOUSE.x + (a + b) / 2, z: RL.cz }));
 const rlSpinNumber = () => { const u = new Uint32Array(1); crypto.getRandomValues(u); return u[0] % 37; };
-const RLS = { phase: 'idle', w: 0, b: 0, r: 0.41, t: 0, w0: 0, b0: 0, W: 0, B: 0, n: -1, paid: 0, stake: 0, bets: [], wait: 0, tick: 0, shown: '' };
+const RLS = { phase: 'idle', w: 0, b: 0, r: 0.41, t: 0, w0: 0, b0: 0, W: 0, B: 0, n: -1, stake: 0, mine: [], others: [], asked: -1e9, tick: 0, shown: '', netT: 0 };
 let rlWheel, rlBall, rlHi, rlSacks = [];
 {
   const g = new THREE.Group(), wood = lam(0x6b3f22), gold = lam(0xd9b04a), H = RL.H;
@@ -1474,55 +1474,72 @@ function rlBet(fromArms) {
 }
 function rlSpin() {
   if (RLS.phase !== 'idle') { toast('The wheel is already spinning', '', 1.2); return; }
-  if (!S.bets.length) { toast('Put a bag on red, green or black first', 'warn', 1.6); return; }
-  RLS.bets = S.bets.map(b => ({ c: b.c, n: b.n, v: b.v, cash: rlCash(b.v) })); S.bets = [];
-  RLS.stake = RLS.bets.reduce((a, b) => a + b.cash, 0);
+  if (!S.bets.length && !rlOthersBets().length) { toast('Put a bag on red, green or black first', 'warn', 1.6); return; }
+  if (!NET.on) { rlStart(rlSpinNumber(), { me: rlMyBets() }); return; }
+  if (NET.isHost) { hostSpin(); return; }
+  // in a lobby the host picks the number for everyone
+  if (performance.now() - RLS.asked < 3000) return;
+  RLS.asked = performance.now();
+  netSend('req', { k: 'spin', to: NET.hostId });
+  toast('Asking the host to spin…', '', 1.5);
+}
+const rlMyBets = () => S.bets.map(b => [b.c, b.n, +rlCash(b.v).toFixed(4)]);
+// bets as [colour, clippings, cash], from presence or a spin message: never trusted as-is
+const cleanBets = rb => Array.isArray(rb) ? rb.slice(0, 3).filter(b => Array.isArray(b) && RL_PAY[b[0]] && +b[1] > 0 && +b[2] >= 0 && isFinite(b[2])).map(b => [b[0], Math.min(+b[1], 1e7), Math.min(+b[2], 1e9)]) : [];
+const peerName = id => String(NET.peers.find(p => p.id === id)?.pres?.n || 'Someone').slice(0, 16);
+// everyone else's bags on the table, from their presence
+function rlOthersBets() {
+  if (!NET.on) return [];
+  return NET.peers.filter(p => !NET.blocked.has(p.id)).map(p => ({ id: p.id, name: peerName(p.id), bets: cleanBets(p.pres?.rb) })).filter(o => o.bets.length);
+}
+// the host spins: every bet on the table at this moment rides, and the message says exactly which
+function hostSpin(quiet) {
+  const bets = {};
+  if (S.bets.length) bets[NET.selfId] = rlMyBets();
+  for (const o of rlOthersBets()) {
+    // co-op: a guest's stake comes out of the ledger of grass they were seen cutting
+    if (NET.coop) for (const b of o.bets) b[2] = +claimPool(b[2]).toFixed(4);
+    bets[o.id] = o.bets;
+  }
+  if (!Object.keys(bets).length) { if (!quiet) toast('Put a bag on red, green or black first', 'warn', 1.6); return; }
+  const n = rlSpinNumber();
+  netSend('spin', { n, bets });
+  rlStart(n, bets);
+}
+function rlStart(n, bets) {
+  const me = NET.on ? NET.selfId : 'me';
+  if (RLS.phase === 'settle') rlLand(); // a new spin arrived before the last one finished here
+  // the part of my bets the host counted rides on this spin; anything placed after stays for the next one
+  RLS.mine = [];
+  for (const [c, cnt, cash] of cleanBets(bets[me])) {
+    const b = S.bets.find(o => o.c === c); if (!b) continue;
+    const take = Math.min(b.n, cnt);
+    RLS.mine.push({ c, n: take, cash }); b.v -= b.v * take / b.n; b.n -= take;
+  }
+  S.bets = S.bets.filter(b => b.n > 0 && b.v > 1e-9);
+  RLS.others = Object.keys(bets).filter(id => id !== me).map(id => ({ id, name: peerName(id), bets: cleanBets(bets[id]) })).filter(o => o.bets.length);
+  RLS.stake = RLS.mine.reduce((a, b) => a + b.cash, 0);
   RLS.r = 0.41; RLS.hop = 0; RLS.tick = 0;
   buySound();
-  if (NET.coop && !NET.isHost) {
-    // the host spins and pays; we keep the ball going round until the answer comes back
-    RLS.phase = 'wait'; RLS.wait = 0;
-    const rq = ++NET.reqSeq; NET.pending.set(rq, { k: 'bet' }); RLS.rq = rq;
-    netSend('req', { k: 'bet', b: RLS.bets.map(b => ({ c: b.c, v: +b.cash.toFixed(4) })), rq, to: NET.hostId });
-  } else {
-    const n = rlSpinNumber();
-    rlSettle(n, RLS.bets.reduce((a, b) => a + (b.c === pocketColor(n) ? b.cash * RL_PAY[b.c] : 0), 0), true);
-  }
+  const target = -WHEEL.indexOf(n) * SEG, d = (((target - RLS.b) % TAU) + TAU) % TAU;
+  Object.assign(RLS, { phase: 'settle', n, t: 0, w0: RLS.w, b0: RLS.b, W: TAU * 1.25, B: d - TAU * 6 });
   save();
 }
-// from now on the ball slows down and drops into pocket n
-function rlSettle(n, paid, local) {
-  const target = -WHEEL.indexOf(n) * SEG, d = (((target - RLS.b) % TAU) + TAU) % TAU;
-  Object.assign(RLS, { phase: 'settle', n, paid, local, t: 0, w0: RLS.w, b0: RLS.b, W: TAU * 1.25, B: d - TAU * 6 });
-}
+const rlWinnings = (bets, col) => bets.reduce((a, b) => a + ((b.c || b[0]) === col ? (b.cash ?? b[2]) * RL_PAY[col] : 0), 0);
 function rlLand() {
-  const n = RLS.n, col = pocketColor(n), paid = RLS.paid;
-  if (RLS.local && paid > 0) earn(paid);
-  if (paid >= 0.005) { floaty('+' + fmt(paid)); col === 'green' ? fanfare() : sellSound(); toast(`${n} ${RL_NAME[col]}! You won ${fmt(paid)}`, 'good', 3.5); }
-  else { denySound(); toast(`${n} ${RL_NAME[col]} · the house keeps ${fmt(RLS.stake)}`, 'warn', 3); }
-  RLS.phase = 'done'; RLS.t = 0; RLS.bets = []; save();
-}
-// the co-op host spins for a guest: their stake comes out of the ledger of grass they were seen cutting
-function hostSpin(d, from) {
-  const bets = (Array.isArray(d.b) ? d.b : []).slice(0, 3).filter(b => RL_PAY[b?.c] && +b.v > 0).map(b => ({ c: b.c, v: claimPool(+b.v) }));
-  const n = rlSpinNumber(), paid = bets.reduce((a, b) => a + (b.c === pocketColor(n) ? b.v * RL_PAY[b.c] : 0), 0);
-  S.money += paid; S.stats.earned += paid;
-  netSend('ack', { to: from, rq: d.rq, spin: n, paid });
-}
-function rlHostAnswered(d) {
-  if (RLS.phase !== 'wait' || d.rq !== RLS.rq) return;
-  rlSettle(d.spin, Math.max(0, +d.paid || 0), false);
+  const n = RLS.n, col = pocketColor(n), won = rlWinnings(RLS.mine, col);
+  const others = RLS.others.map(o => ({ name: o.name, won: rlWinnings(o.bets, col) }));
+  // solo and own-wallet players pay themselves; in co-op the host pays everyone into the shared wallet
+  if (!NET.coop) { if (won > 0) earn(won); }
+  else if (NET.isHost) { const tot = won + others.reduce((a, o) => a + o.won, 0); if (tot > 0) { S.money += tot; S.stats.earned += tot; } }
+  const theirs = others.filter(o => o.won >= 0.005).map(o => `${o.name} won ${fmt(o.won)}`).join(' · ');
+  if (won >= 0.005) { floaty('+' + fmt(won)); col === 'green' ? fanfare() : sellSound(); toast(`${n} ${RL_NAME[col]}! You won ${fmt(won)}${theirs ? ' · ' + theirs : ''}`, 'good', 3.5); }
+  else if (RLS.mine.length) { denySound(); toast(`${n} ${RL_NAME[col]} · the house keeps your ${fmt(RLS.stake)}${theirs ? ' · ' + theirs : ''}`, 'warn', 3.5); }
+  else if (rlNear() || theirs) toast(`${n} ${RL_NAME[col]}${theirs ? ' · ' + theirs : ' · nobody won'}`, theirs ? 'good' : '', 3);
+  RLS.phase = 'done'; RLS.t = 0; RLS.mine = []; RLS.others = []; save();
 }
 function updateRoulette(dt) {
-  if (RLS.phase === 'wait') {
-    RLS.w += dt * 2.2; RLS.b -= dt * 7; RLS.wait += dt;
-    if (RLS.wait > 7) {
-      // no answer from the host: the bags go back on the table
-      for (const b of RLS.bets) { const o = S.bets.find(x => x.c === b.c); if (o) { o.n += b.n; o.v += b.v; } else S.bets.push({ c: b.c, n: b.n, v: b.v }); }
-      NET.pending.delete(RLS.rq); RLS.bets = []; RLS.phase = 'idle';
-      toast('The host didn\'t answer · your bags are back on the table', 'warn', 2.5);
-    }
-  } else if (RLS.phase === 'settle') {
+  if (RLS.phase === 'settle') {
     RLS.t += dt;
     const x = Math.min(1, RLS.t / 4.6), e = 1 - (1 - x) ** 3;
     RLS.w = RLS.w0 + RLS.W * e; RLS.b = RLS.b0 + RLS.B * e;
@@ -1530,21 +1547,31 @@ function updateRoulette(dt) {
     RLS.r = x < 0.5 ? 0.41 : x < 0.75 ? 0.41 - (x - 0.5) / 0.25 * 0.09 : 0.32;
     RLS.hop = x > 0.5 && x < 0.85 ? Math.abs(Math.sin(x * 46)) * 0.03 * (0.85 - x) / 0.35 : 0;
     const k = Math.floor(RLS.b / SEG);
-    if (k !== RLS.tick && x > 0.45 && x < 0.95) { RLS.tick = k; blip(1800 + Math.random() * 300, 0.03, 'square', 0.05); }
+    if (k !== RLS.tick && x > 0.45 && x < 0.95 && Math.hypot(P.x - RL.wx, P.z - RL.cz) < 12) { RLS.tick = k; blip(1800 + Math.random() * 300, 0.03, 'square', 0.05); }
     if (x >= 1) rlLand();
+    rlPlaceBall();
   } else if (RLS.phase === 'done') {
     RLS.t += dt; if (RLS.t > 2) RLS.phase = 'idle';
   }
-  if (RLS.phase === 'wait' || RLS.phase === 'settle' || RLS.phase === 'done') rlPlaceBall();
-  // bags on the table: one per colour you've bet on (the ones riding on this spin stay until the ball lands)
-  const show = RLS.bets.length ? RLS.bets : S.bets, key = show.map(b => b.c + b.n).join();
-  if (key !== RLS.shown) {
-    RLS.shown = key;
-    for (const m of rlSacks) scene.remove(m);
-    rlSacks = show.map(b => {
-      const a = RL.areas.find(o => o.c === b.c), m = sackMesh(), sc = Math.min(0.75, 0.42 + b.n / 4000);
-      m.scale.setScalar(sc); m.position.set(a.x, RL.H, a.z); m.rotation.y = a.x * 3; scene.add(m); return m;
-    });
+  // bags on the table: yours in the middle of each colour, other players' spread around it
+  RLS.netT -= dt;
+  if (RLS.netT <= 0) {
+    RLS.netT = 0.25;
+    const spinning = RLS.phase === 'settle';
+    const groups = [{ id: 'me', bets: spinning ? RLS.mine.map(b => [b.c, b.n]) : S.bets.map(b => [b.c, b.n]) }]
+      .concat((spinning ? RLS.others : rlOthersBets()).map(o => ({ id: o.id, bets: o.bets })));
+    const list = [];
+    groups.forEach((g, slot) => { for (const [c, n] of g.bets) list.push({ c, n, slot }); });
+    const key = list.map(b => b.c + b.n + ':' + b.slot).join();
+    if (key !== RLS.shown) {
+      RLS.shown = key;
+      for (const m of rlSacks) scene.remove(m);
+      const SLOTS = [[0, 0], [0, -0.3], [0, 0.3], [-0.12, -0.15], [0.12, 0.15], [-0.12, 0.15], [0.12, -0.15]];
+      rlSacks = list.map(b => {
+        const a = RL.areas.find(o => o.c === b.c), m = sackMesh(), [ox, oz] = SLOTS[b.slot % SLOTS.length], sc = Math.min(0.6, 0.34 + b.n / 5000) * (b.slot ? 0.85 : 1);
+        m.scale.setScalar(sc); m.position.set(a.x + ox, RL.H, a.z + oz); m.rotation.y = a.x * 3 + b.slot; scene.add(m); return m;
+      });
+    }
   }
   // light up the colour you're aiming at
   const a = state === 'play' && RLS.phase === 'idle' && (S.bag || S.carry.length) && rlNear() ? rlAim() : null;
@@ -1553,15 +1580,18 @@ function updateRoulette(dt) {
 }
 function rlPrompt() {
   const kb = isTouch ? 'BAG' : 'B', kg = isTouch ? 'DROP' : 'G', ke = isTouch ? 'USE' : 'E';
-  if (RLS.phase === 'wait' || RLS.phase === 'settle') return `<div class="pill">No more bets · ${fmt(RLS.stake)} riding on this spin</div>`;
+  const others = RLS.phase === 'settle' ? RLS.others : rlOthersBets();
+  const theirs = others.map(o => `${o.name} ${o.bets.map(b => `${RL_NAME[b[0]]} ${fmt(b[2])}`).join(', ')}`).join(' · ');
+  if (RLS.phase === 'settle') return `<div class="pill">No more bets${RLS.stake ? ` · your ${fmt(RLS.stake)} is riding` : ''}${theirs ? ' · ' + theirs : ''}</div>`;
   if (RLS.phase === 'done') return '';
   const a = rlAim(), lines = [];
   if (a) {
     if (S.bag) lines.push(`<kbd>${kb}</kbd> Bet your bag on ${RL_NAME[a.c]} (${fmt(rlCash(S.bagValue))})`);
     if (S.carry.length) lines.push(`<kbd>${kg}</kbd> Bet the bags in your arms on ${RL_NAME[a.c]} (${fmt(rlCash(carryValue()))})`);
   } else if (S.bag || S.carry.length) lines.push('Aim at red, green or black on the table to bet');
-  if (S.bets.length) lines.push(`<kbd>${ke}</kbd> Spin · ${S.bets.map(b => `${RL_NAME[b.c]} ${fmt(rlCash(b.v))}`).join(', ')}`);
-  else if (!lines.length) lines.push('Bring bags of grass to bet on red, green or black');
+  if (S.bets.length || others.length) lines.push(`<kbd>${ke}</kbd> Spin${S.bets.length ? ' · you: ' + S.bets.map(b => `${RL_NAME[b.c]} ${fmt(rlCash(b.v))}`).join(', ') : ''}`);
+  if (theirs) lines.push(`On the table: ${theirs}`);
+  if (!lines.length) lines.push('Bring bags of grass to bet on red, green or black');
   return lines.map(l => `<div class="pill">${l}</div>`).join('');
 }
 
@@ -2283,7 +2313,7 @@ function nearestInteract() {
   return best;
 }
 function useAction() {
-  if (rlNear() && (S.bets.length || RLS.phase !== 'idle')) { rlSpin(); return; }
+  if (rlNear() && (S.bets.length || RLS.phase !== 'idle' || rlOthersBets().length)) { rlSpin(); return; }
   const it = nearestInteract();
   if (it?.type === 'tool') { pickUpTool(it.id); return; }
   if (it?.type === 'sack') {
@@ -2959,9 +2989,10 @@ function wireNet(tx0) {
   tx.on('want', (d, from) => { if (NET.isHost && d?.to === NET.selfId && rateOk(from, 20)) sendSnapTo(from); });
   tx.on('econ', (d, from) => { if (NET.coop && !NET.isHost && from === NET.hostId) applyEcon(d); });
   tx.on('req', (d, from) => {
+    // anyone at the roulette table can ask the host to spin, in either mode
+    if (d?.k === 'spin') { if (NET.isHost && (!d.to || d.to === NET.selfId) && rateOk(from, 5) && RLS.phase === 'idle') hostSpin(true); return; }
     if (!NET.isHost || !NET.coop || !d || (d.to && d.to !== NET.selfId) || !rateOk(from, 5)) return;
     if (d.k === 'earn') { const v = claimPool(+d.v > 0 ? +d.v : 0); S.money += v; S.stats.earned += v; return; }
-    if (d.k === 'bet') { hostSpin(d, from); return; }
     if (d.k === 'shop') {
       const ok = econAct(d.act, d.id);
       if (ok) afterShop(d.act, d.id, false);
@@ -2972,7 +3003,6 @@ function wireNet(tx0) {
   tx.on('ack', (d, from) => {
     if (!d || d.to !== NET.selfId || from !== NET.hostId || !NET.pending.has(d.rq)) return;
     NET.pending.delete(d.rq);
-    if (Number.isInteger(d.spin) && d.spin >= 0 && d.spin <= 36) { rlHostAnswered(d); return; }
     if (d.ok) { isSale(d.act) ? sellSound() : buySound(); afterShop(d.act, d.id, true); }
     else { denySound(); toast('The shared wallet couldn\'t cover that', 'warn'); }
   });
@@ -2998,6 +3028,11 @@ function wireNet(tx0) {
       takeSack(s, true);
     }
   });
+  // the host's spin: one number for the whole table, and exactly whose bets ride on it
+  tx.on('spin', (d, from) => {
+    if (from !== NET.hostId || !Number.isInteger(d?.n) || d.n < 0 || d.n > 36 || !d.bets || typeof d.bets !== 'object') return;
+    rlStart(d.n, d.bets);
+  });
   tx.on('note', (d, from) => { if (from === NET.hostId && typeof d?.msg === 'string') toast(d.msg.slice(0, 80), '', 2.4); });
   // the host can close the lobby for everyone, or remove one player
   tx.on('close', (d, from) => { if (from === NET.hostId) leaveLobby('The host closed the lobby.'); });
@@ -3015,6 +3050,7 @@ function sendPresence() {
   const pres = { n: NET.name, c: NET.color, s: NET.since, x: +P.x.toFixed(2), z: +P.z.toFixed(2), vx: +P.vx.toFixed(2), vz: +P.vz.toFixed(2), y: +P.yaw.toFixed(2), t: S.tool, k: S.carry.length, ph: NET.phase, m: NET.mode, bv: +(S.bagValue + carryValue()).toFixed(2) };
   if (robots.length) pres.r = robots.slice(0, 40).map(r => [ROBOTS.indexOf(r.model), Math.round(r.x * 10), Math.round(r.z * 10), Math.round(r.h * 100)]);
   if (NET.isHost) pres.d = +S.dayT.toFixed(4);
+  if (S.bets.length) pres.rb = rlMyBets().map(b => [b[0], b[1], +b[2].toFixed(2)]);
   NET.tx.presence(pres);
 }
 setInterval(sendPresence, 50);
