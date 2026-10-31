@@ -13,20 +13,33 @@ A cartoon lawn-mowing game: cut grass, haul bags of clippings for cash, upgrade 
 
 ## Multiplayer
 
-Players type the same lobby name to play together. Whoever creates a lobby picks its mode:
+The host opens a lobby from the main menu and shares its 10-character code (like `K7M2Q-8F3XZ`). Friends type it under **Join a game**, wait in the lobby, and drop in when the host starts. The host picks the mode:
 
-- **Co-op** — one shared wallet. Tools, upgrades, robots and drop-offs are shared.
-- **Shared map, own wallets** — everyone mows the same map but earns and spends their own money.
+- **Co-op**: one shared wallet. Tools, upgrades, robots and drop-offs are shared.
+- **Shared map, own wallets**: everyone mows the same map but earns and spends their own money.
+
+A lobby holds up to 8 players. It closes when the host leaves, and the host can reopen it later from the same browser (**Resume lobby**).
 
 How players connect depends on where the game is opened:
 
 | Where | Connection | Lobby saved |
 |---|---|---|
-| claude.ai artifact | The artifact's live room | In the artifact's shared store |
-| GitHub Pages (or any HTTPS host) | Browser to browser (WebRTC through Trystero's free public Nostr relays, no server) | In each player's browser; the copy with the most mowing wins when players meet |
-| Any page with `?net=local` | Tabs in the same browser (for testing) | In that browser |
+| claude.ai artifact | The artifact's live room | In the artifact's shared store, signed by the host |
+| GitHub Pages (or any HTTPS host) | Browser to browser (WebRTC through Trystero's free public Nostr relays, no server) | In the host's browser |
+| Any page with `?net=local` | Tabs in the same browser (for testing) | In the host's browser |
 
-Peer-to-peer needs HTTPS. A few strict corporate or mobile networks block direct browser connections; players on those networks won't be able to join peer-to-peer lobbies.
+Multiplayer needs HTTPS. A few strict corporate or mobile networks block direct browser connections; players there are routed through the relays instead, which is slower.
+
+### Cheating
+
+There's no server, so what each player's own browser does can't be fully trusted. The game is built so that one player can't change anyone else's game:
+
+- **Signed messages:** every player signs what they send with a key kept in their browser, so nobody can speak for another player.
+- **The host's key:** the lobby code is a fingerprint of the host's key, so only the host can run the shared wallet, confirm purchases, spin the roulette wheel, run bosses or save the lobby.
+- **Per-player credit:** in co-op the host keeps a record of each player's credit, built from the grass it saw them cut. Sales are paid only from that player's own credit, and only when they're standing on a drop-off pad.
+- **Movement checks:** cuts, bag drops and hits on bosses only count close to where a player can really be. Players can't move faster than the fastest gear allows.
+
+Solo games and own-wallet money live in each player's browser, and that player can edit them. That's a limit of having no server.
 
 ## Publish on GitHub Pages
 

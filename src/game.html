@@ -271,7 +271,7 @@ body.bossOn #compass { top: calc(72px + env(safe-area-inset-top, 0px)); } /* bel
     </div>
     <button class="btn ghost" id="mpResume" hidden></button>
     <div class="joinRow">
-      <label for="mpCodeIn">Join a game<input id="mpCodeIn" class="codeIn" maxlength="7" placeholder="K7M2Q" autocomplete="off" autocapitalize="characters" spellcheck="false"></label>
+      <label for="mpCodeIn">Join a game<input id="mpCodeIn" class="codeIn" maxlength="11" placeholder="K7M2Q-8F3XZ" autocomplete="off" autocapitalize="characters" spellcheck="false"></label>
       <button class="btn alt" id="mpJoin">Join</button>
     </div>
     <span id="mpStatus" role="status"></span>
@@ -496,23 +496,30 @@ const fresh = () => ({ money: 0, owned: { scissors: true }, pocket: 'scissors', 
   up: { bag: 0, arms: 0, shoes: 0, buyer: 0, blades: 0, deck: 0, tune: 0 }, robots: [], outposts: OUTPOSTS.map(() => false),
   stats: { cut: 0, earned: 0, time: 0 }, bag: 0, bagValue: 0, muted: false, ach: {}, cutBits: '', gridSig: '', won: false, px: 0, pz: 3, yaw: null, dayT: 0.3, upTier: 1, bets: [], beaten: [false, false, false, false, false, false, false], wipes: [0, 0, 0, 0, 0, 0, 0], met: [false, false, false, false, false, false, false] });
 let S = fresh();
+// a bag on the ground: somewhere on the map, with clippings in it, worth no more than that much crystal grass
+const sackOk = s => !!s && Number.isFinite(+s.x) && Number.isFinite(+s.z) && Math.hypot(s.x, s.z) < R_MAP && +s.n > 0 && +s.n <= BAG_LEVELS[BAG_LEVELS.length - 1] && +s.v >= 0 && +s.v <= +s.n * TIERS[6].value;
+const num = (v, lo, hi, dflt = lo) => Number.isFinite(+v) ? Math.min(hi, Math.max(lo, +v)) : dflt;
+const cleanUp = up => Object.fromEntries(UPGRADES.map(u => [u.id, Math.round(num(up?.[u.id], 0, u.max))]));
+const cleanOwned = o => Object.assign({ scissors: true }, Object.fromEntries(TOOLS.filter(t => o && o[t.id] === true).map(t => [t.id, true])));
 function loadInto(data) {
-  if (!data) return;
+  if (!data || typeof data !== 'object') return;
   const f = fresh();
   S = Object.assign(f, data);
-  S.up = Object.assign(fresh().up, data.up || {});
-  S.owned = Object.assign({ scissors: true }, data.owned || {});
-  S.stats = Object.assign(fresh().stats, data.stats || {});
+  // a save is only as honest as the browser it's in, but nothing out of range gets through
+  S.money = num(data.money, 0, 1e12); S.up = cleanUp(data.up); S.owned = cleanOwned(data.owned);
+  S.stats = { cut: num(data.stats?.cut, 0, 1e9), earned: num(data.stats?.earned, 0, 1e13), time: num(data.stats?.time, 0, 1e9) };
+  S.bag = Math.round(num(data.bag, 0, BAG_LEVELS[S.up.bag])); S.bagValue = num(data.bagValue, 0, S.bag * TIERS[6].value);
   S.ach = Object.assign({}, data.ach || {});
   S.toolAt = Object.assign({}, data.toolAt || {});
-  S.carry = Array.isArray(data.carry) ? data.carry : [];
-  S.sacks = Array.isArray(data.sacks) ? data.sacks.filter(s => isFinite(s.x) && isFinite(s.z)) : [];
+  S.carry = Array.isArray(data.carry) ? data.carry.filter(c => sackOk({ x: 0, z: 0, n: c?.n, v: c?.v })).slice(0, 5).map(c => ({ n: +c.n, v: +c.v })) : [];
+  S.sacks = Array.isArray(data.sacks) ? data.sacks.filter(sackOk).slice(0, MAX_SACKS).map(s => ({ id: String(s.id || '').slice(0, 12), x: +s.x, z: +s.z, n: +s.n, v: +s.v })) : [];
   S.beaten = f.beaten.map((v, t) => !!(Array.isArray(data.beaten) && data.beaten[t]));
   S.met = f.met.map((v, t) => !!(Array.isArray(data.met) && data.met[t]) || S.beaten[t]);
   S.wipes = f.wipes.map((v, t) => Array.isArray(data.wipes) ? Math.max(0, +data.wipes[t] || 0) : 0);
   S.bets = Array.isArray(data.bets) ? data.bets.filter(b => ['red', 'black', 'green'].includes(b?.c) && b.v > 0 && b.n > 0).slice(0, 3) : [];
   if (!Array.isArray(S.outposts) || S.outposts.length !== OUTPOSTS.length) S.outposts = f.outposts;
-  S.robots = (S.robots || []).filter(id => ROBOTS.find(r => r.id === id));
+  S.robots = (Array.isArray(S.robots) ? S.robots : []).filter(id => ROBOTS.find(r => r.id === id)).slice(0, ROBOT_MAX * ROBOTS.length);
+  S.outposts = S.outposts.map(Boolean);
   if (!toolDef(S.pocket)?.pocket || !S.owned[S.pocket]) S.pocket = 'scissors';
   if (S.held && (!S.owned[S.held] || toolDef(S.held)?.pocket)) S.held = null;
   // any owned big gear without a spot goes next to the shed
@@ -1523,7 +1530,7 @@ function hostSpin(quiet) {
   if (S.bets.length) bets[NET.selfId] = rlMyBets();
   for (const o of rlOthersBets()) {
     // co-op: a guest's stake comes out of the ledger of grass they were seen cutting
-    if (NET.coop) for (const b of o.bets) b[2] = +claimPool(b[2]).toFixed(4);
+    if (NET.coop) for (const b of o.bets) b[2] = +claimCredit(o.id, b[2]).toFixed(4);
     bets[o.id] = o.bets;
   }
   if (!Object.keys(bets).length) { if (!quiet) toast('Put a bag on red, green or black first', 'warn', 1.6); return; }
@@ -2238,7 +2245,6 @@ function updateCollector(r, dt, tm) {
   const d = steer(r, r.goal.x, r.goal.z, r.model.speed * tm, dt);
   if (r.goal.sack && d < 0.9) {
     const s = r.goal.sack; takeSack(s);
-    if (s.o && NET.coop && NET.isHost) { s.v = claimPool(s.v * sellMult()) / sellMult(); s.o = 0; }
     r.load.push({ n: s.n, v: s.v }); r.goal = null; refreshCollectorLoad(r);
   } else if (r.goal.depot && d < 2.5) {
     const v = r.load.reduce((a, s) => a + s.v, 0) * sellMult();
@@ -2776,9 +2782,9 @@ function useAction() {
   if (it?.type === 'sack') {
     // empty it into the bag you're wearing first; you only carry what doesn't fit
     const s = it.s, room = bagCap() - S.bag;
-    if (s.o && NET.coop && NET.isHost) { s.v = claimPool(s.v * sellMult()) / sellMult(); s.o = 0; }
+    if (!(s.n > 0) || !(s.v >= 0)) { takeSack(s); return; } // an empty or broken bag just goes away
     if (room > 0) {
-      const take = Math.min(room, s.n), val = s.n ? s.v * take / s.n : s.v, rest = { n: s.n - take, v: s.v - val };
+      const take = Math.min(room, s.n), val = s.v * take / s.n, rest = { n: s.n - take, v: s.v - val };
       if (!takeSack(s)) return;
       S.bag += take; S.bagValue += val; thudSound();
       if (rest.n <= 0) { toast(`Added to your bag · +${fmt(val * sellMult())}`, 'good', 1.4); return; }
@@ -2900,7 +2906,7 @@ function renderShop() {
       if (!own) btn = `<button class="buy" data-act="tool" data-id="${t.id}" ${S.money < t.price ? 'disabled' : ''}>${fmt(t.price)}</button>`;
       else if (t.pocket) btn = S.pocket === t.id ? `<button class="buy owned" disabled>In pocket</button>` : `<button class="buy equip" data-act="equip" data-id="${t.id}">Equip</button>`;
       else btn = S.held === t.id ? `<button class="buy owned" disabled>In hand</button>` : `<button class="buy equip" data-act="locate" data-id="${t.id}">Find · ${Math.round(toolDist(t.id))} m</button>`;
-      const sell = own && t.id !== 'scissors' ? `<button class="buy sell" data-act="sellTool" data-id="${t.id}">Sell ${fmt(t.price)}</button>` : '';
+      const sell = own && t.id !== 'scissors' ? `<button class="buy sell" data-act="sellTool" data-id="${t.id}">Sell ${fmt(refund(t.price))}</button>` : '';
       return `<div class="item"><div class="ico">${icon(t.id)}</div><div><h3>${t.name}</h3><div class="meta"><span class="chip"><span class="swatch" style="background:${TIERS[t.tier].color}"></span>Cuts up to <b>${TIERS[t.tier].name}</b></span><span>Cut <b>${(t.hw * 2).toFixed(1)} × ${(t.hd * 2).toFixed(1)} m</b></span><span>Power <b>${t.power}</b></span>${t.speed > 1 ? `<span>Speed <b>×${t.speed}</b></span>` : ''}<span>${t.pocket ? 'Pocket tool' : t.kind === 'ride' ? 'Ride-on' : 'Big gear'}</span></div><div class="meta">${t.desc}</div></div><div class="btns">${sell}${btn}</div></div>`;
     }).join('');
   } else if (shopTab === 'upgrades') {
@@ -2908,7 +2914,7 @@ function renderShop() {
     html = UPGRADES.map(u => {
       const l = S.up[u.id], maxed = l >= u.max, c = maxed ? 0 : u.cost(l), cap = levelCap(u, tier), locked = !maxed && l >= cap;
       const btn = maxed ? `<button class="buy owned" disabled>Maxed</button>` : locked ? `<button class="buy owned" disabled>Locked</button>` : `<button class="buy" data-act="up" data-id="${u.id}" ${S.money < c ? 'disabled' : ''}>${fmt(c)}</button>`;
-      const sell = l > 0 ? `<button class="buy sell" data-act="sellUp" data-id="${u.id}">Sell 1 level ${fmt(u.cost(l - 1))}</button>` : '';
+      const sell = l > 0 ? `<button class="buy sell" data-act="sellUp" data-id="${u.id}">Sell 1 level ${fmt(refund(u.cost(l - 1)))}</button>` : '';
       const why = locked ? `<div class="meta" style="color:var(--warn)">Next level unlocks after you mow ${UNLOCK_FRAC * 100}% of the ${TIERS[unlockZoneFor(u, l)].zone}</div>` : '';
       return `<div class="item"><div class="ico">${icon(u.id)}</div><div><h3>${u.name} ${lvlDots(l, u.max, Math.max(cap, l))}</h3><div class="meta">${u.desc(l)}</div>${why}</div><div class="btns">${sell}${btn}</div></div>`;
     }).join('');
@@ -2920,7 +2926,7 @@ function renderShop() {
       const btn = n >= ROBOT_MAX ? `<button class="buy owned" disabled>Fleet full</button>` : n >= cap ? `<button class="buy owned" disabled>Locked</button>` : `<button class="buy" data-act="robot" data-id="${r.id}" ${S.money < c ? 'disabled' : ''}>${fmt(c)}</button>`;
       let next = 0; for (let k = tier + 1; k <= 6 && !next; k++) if (robotCap(r, k) > n) next = k;
       const why = n < ROBOT_MAX && n >= cap && next ? `<div class="meta" style="color:var(--warn)">${cap ? 'More unlock' : 'Unlocks'} after you mow ${UNLOCK_FRAC * 100}% of the ${TIERS[next].zone}</div>` : '';
-      const sell = n ? `<button class="buy sell" data-act="sellRobot" data-id="${r.id}">Sell one ${fmt(Math.round(r.price * 1.4 ** (n - 1)))}</button>` : '';
+      const sell = n ? `<button class="buy sell" data-act="sellRobot" data-id="${r.id}">Sell one ${fmt(refund(Math.round(r.price * 1.4 ** (n - 1))))}</button>` : '';
       const spec = r.kind === 'collector' ? `<span>Carries <b>${r.cap} bags</b></span>` : `<span class="chip"><span class="swatch" style="background:${TIERS[r.tier].color}"></span>Cuts up to <b>${TIERS[r.tier].name}</b></span><span>Width <b>${(r.r * 2).toFixed(1)} m</b></span>`;
       return `<div class="item"><div class="ico">${icon(r.id)}</div><div><h3>${r.name} <span style="font-size:14px;color:var(--ink-dim)">· ${n} / ${Math.max(cap, n)} owned</span></h3><div class="meta">${spec}</div><div class="meta">${r.desc}</div>${why}</div><div class="btns">${sell}${btn}</div></div>`;
     }).join('');
@@ -2928,12 +2934,12 @@ function renderShop() {
     html = `<div class="meta" style="padding:0 4px 4px">A drop-off lets you cash in bags and shop out in the field. Each zone has four sites; unbuilt ones show a FOR SALE sign.</div>` + OUTPOSTS.map((o, k) => {
       const built = S.outposts[k], d = depots[k + 1];
       const btn = built ? `<button class="buy owned" disabled>Built</button>` : `<button class="buy" data-act="outpost" data-id="${k}" ${S.money < o.price ? 'disabled' : ''}>${fmt(o.price)}</button>`;
-      const sell = built ? `<button class="buy sell" data-act="sellOutpost" data-id="${k}">Sell ${fmt(o.price)}</button>` : '';
+      const sell = built ? `<button class="buy sell" data-act="sellOutpost" data-id="${k}">Sell ${fmt(refund(o.price))}</button>` : '';
       return `<div class="item"><div class="ico">${icon('outpost')}</div><div><h3>${o.name}</h3><div class="meta"><span class="chip"><span class="swatch" style="background:${TIERS[o.tier].color}"></span>In the <b>${TIERS[o.tier].zone}</b></span><span><b>${Math.round(Math.hypot(d.x - P.x, d.z - P.z))} m</b> from here</span></div></div><div class="btns">${sell}${btn}</div></div>`;
     }).join('');
   }
   const st = stuckInfo();
-  const note = st ? `<div class="stuck">You're ${fmt(st.short)} short of the ${st.next.name}, even after cutting everything you can reach. Everything sells back for what you paid, so sell a few upgrades or robots to cover it.</div>` : '';
+  const note = st ? `<div class="stuck">You're ${fmt(st.short)} short of the ${st.next.name}, even after cutting everything you can reach. Upgrades and robots sell back for 75% of what you paid, so selling a few can cover it.</div>` : '';
   $('shopList').innerHTML = note + html;
 }
 $('shopList').addEventListener('click', e => {
@@ -2944,16 +2950,19 @@ $('shopList').addEventListener('click', e => {
   shopAction(act, id);
 });
 // The wallet's owner (you in solo or own-wallet lobbies, the host in co-op) applies purchases and sales.
+// selling gives back 75% of what you paid: still a safety net, but upgrades and robots aren't free any more
+const REFUND = 0.75;
+const refund = c => Math.round(c * REFUND * 100) / 100;
 function econAct(act, id) {
   const pay = c => { if (S.money < c) return false; S.money -= c; return true; };
   if (act === 'tool') { const t = toolDef(id); return !!t && !S.owned[id] && pay(t.price) && (S.owned[id] = true); }
-  if (act === 'sellTool') { const t = toolDef(id); if (!t || !S.owned[id] || id === 'scissors') return false; delete S.owned[id]; S.money += t.price; return true; }
+  if (act === 'sellTool') { const t = toolDef(id); if (!t || !S.owned[id] || id === 'scissors') return false; delete S.owned[id]; S.money += refund(t.price); return true; }
   if (act === 'up') { const u = UPGRADES.find(u => u.id === id); if (!u || S.up[id] >= Math.min(u.max, levelCap(u, upgradeTier())) || !pay(u.cost(S.up[id]))) return false; S.up[id]++; return true; }
-  if (act === 'sellUp') { const u = UPGRADES.find(u => u.id === id); if (!u || S.up[id] <= 0) return false; S.up[id]--; S.money += u.cost(S.up[id]); return true; }
+  if (act === 'sellUp') { const u = UPGRADES.find(u => u.id === id); if (!u || S.up[id] <= 0) return false; S.up[id]--; S.money += refund(u.cost(S.up[id])); return true; }
   if (act === 'robot') { const r = ROBOTS.find(r => r.id === id); if (!r || S.robots.filter(x => x === id).length >= robotCap(r, upgradeTier()) || !pay(robotPrice(r))) return false; S.robots.push(id); return true; }
-  if (act === 'sellRobot') { const r = ROBOTS.find(r => r.id === id), k = S.robots.lastIndexOf(id); if (!r || k < 0) return false; S.robots.splice(k, 1); S.money += robotPrice(r); return true; }
+  if (act === 'sellRobot') { const r = ROBOTS.find(r => r.id === id), k = S.robots.lastIndexOf(id); if (!r || k < 0) return false; S.robots.splice(k, 1); S.money += refund(robotPrice(r)); return true; }
   if (act === 'outpost') { const k = +id; if (!OUTPOSTS[k] || S.outposts[k] || !pay(OUTPOSTS[k].price)) return false; S.outposts[k] = true; return true; }
-  if (act === 'sellOutpost') { const k = +id; if (!OUTPOSTS[k] || !S.outposts[k]) return false; S.outposts[k] = false; S.money += OUTPOSTS[k].price; return true; }
+  if (act === 'sellOutpost') { const k = +id; if (!OUTPOSTS[k] || !S.outposts[k]) return false; S.outposts[k] = false; S.money += refund(OUTPOSTS[k].price); return true; }
   return false;
 }
 const isSale = act => act.startsWith('sell');
@@ -2974,7 +2983,7 @@ function afterShop(act, id, mine) {
     }
     toast(`Bought the ${t.name}!`, 'good');
   }
-  if (act === 'sellTool') { cleanupTool(id); if (mine) toast(`Sold the ${toolDef(id).name} for ${fmt(toolDef(id).price)}`, 'good'); }
+  if (act === 'sellTool') { cleanupTool(id); if (mine) toast(`Sold the ${toolDef(id).name} for ${fmt(refund(toolDef(id).price))}`, 'good'); }
   if (act === 'robot' || act === 'sellRobot') { syncRobotSims(); if (act === 'robot' && mine) { toast(`${ROBOTS.find(r => r.id === id).name} deployed`, 'good'); unlock('first_robot'); } }
   if (act === 'outpost' || act === 'sellOutpost') { rebuildDepots(); if (act === 'outpost' && mine) toast(`${OUTPOSTS[+id].name} built`, 'good'); }
   syncTool(); save(); if (shopOpen) renderShop();
@@ -2988,7 +2997,7 @@ function shopAction(act, id) {
 }
 // money from selling bags lands in the shared wallet in co-op
 function earn(v) {
-  if (NET.coop && !NET.isHost) { netSend('req', { k: 'earn', v }); return; }
+  if (NET.coop && !NET.isHost) { netSend('req', { k: 'earn', v, to: NET.hostId }); return; }
   S.money += v; S.stats.earned += v;
 }
 document.querySelectorAll('.tab[data-tab]').forEach(t => t.addEventListener('click', () => { shopTab = t.dataset.tab; renderShop(); }));
@@ -3057,13 +3066,125 @@ function findHunt() {
 }
 
 // ===================== MULTIPLAYER =====================
+// ---- signed messages ----
+// Every player signs what they send with a key kept in their browser, so a player's ID is a fingerprint of
+// their key and nobody can speak for anyone else. A lobby's code is the fingerprint of its host's key:
+// only that key can act as host, so nobody can take over the shared wallet or forge the lobby.
+const SIG = { name: 'ECDSA', namedCurve: 'P-256', hash: 'SHA-256' };
+const ID_KEY = 'cutabove_id';
+const ME = { pub: '', priv: null, pid: '', code: '' };
+const utf8 = s => new TextEncoder().encode(s);
+const sha = async bytes => new Uint8Array(await crypto.subtle.digest('SHA-256', bytes));
+const pidOf = h => [...h.slice(0, 12)].map(b => b.toString(16).padStart(2, '0')).join('');
+// a lobby code: 10 characters from the host key's fingerprint (about 49 bits, too many to fake by brute force)
+function codeOf(h) { let n = 0n; for (let k = 0; k < 8; k++) n = n * 256n + BigInt(h[k]); let s = ''; for (let k = 0; k < 10; k++) { s += CODE_CHARS[Number(n % 31n)]; n /= 31n; } return s; }
+const fmtCode = c => c.length === 10 ? c.slice(0, 5) + '-' + c.slice(5) : c;
+async function makeKey() {
+  const k = await crypto.subtle.generateKey(SIG, true, ['sign', 'verify']);
+  return { pub: toB64(new Uint8Array(await crypto.subtle.exportKey('raw', k.publicKey))), priv: await crypto.subtle.exportKey('jwk', k.privateKey) };
+}
+async function useKey(stored) {
+  const priv = await crypto.subtle.importKey('jwk', stored.priv, SIG, false, ['sign']), h = await sha(fromB64(stored.pub));
+  Object.assign(ME, { pub: stored.pub, priv, pid: pidOf(h), code: codeOf(h) });
+}
+// the key you join lobbies with, made once per browser
+async function playerKey() {
+  let k = null;
+  try { k = JSON.parse(localStorage.getItem(ID_KEY)); } catch (e) {}
+  if (!k?.pub || !k?.priv) { k = await makeKey(); try { localStorage.setItem(ID_KEY, JSON.stringify(k)); } catch (e) {} }
+  return k;
+}
+const signText = async text => toB64(new Uint8Array(await crypto.subtle.sign(SIG, ME.priv, utf8(text))));
+// other players' keys, checked once and remembered
+const KEYS = new Map();
+async function keyInfo(pub) {
+  let e = KEYS.get(pub); if (e) return e;
+  if (typeof pub !== 'string' || pub.length !== 88) return null;
+  try { const raw = fromB64(pub), h = await sha(raw); e = { key: await crypto.subtle.importKey('raw', raw, SIG, false, ['verify']), pid: pidOf(h), code: codeOf(h) }; } catch (err) { return null; }
+  if (KEYS.size > 200) KEYS.delete(KEYS.keys().next().value);
+  KEYS.set(pub, e); return e;
+}
+async function verifyText(pub, text, sig) {
+  if (typeof sig !== 'string' || sig.length > 120) return null;
+  const e = await keyInfo(pub); if (!e) return null;
+  try { return await crypto.subtle.verify(SIG, e.key, fromB64(sig), utf8(text)) ? e : null; } catch (err) { return null; }
+}
+// Wraps a transport so everything sent is signed and everything received is checked. Players are then known
+// by their key's ID, whatever the connection calls them. Checking is rate-limited per connection and overall.
+function secureTx(tx, slug) {
+  const st = { seq: 0, chain: Promise.resolve(), seenQ: new Map(), pres: new Map(), checking: new Set(), lanes: new Map(), all: { t: performance.now(), tok: 800 } };
+  const envelope = async (topic, d) => { const j = JSON.stringify(d), q = ++st.seq, w = Date.now(); return { p: ME.pub, q, w, j, s: await signText(`${slug}|${topic}|${q}|${w}|${j}`) }; };
+  const bucket = (b, cap, rate) => { const now = performance.now(); b.tok = Math.min(cap, b.tok + (now - b.t) / 1000 * rate); b.t = now; if (b.tok < 1) return false; b.tok--; return true; };
+  const lane = from => {
+    let b = st.lanes.get(from);
+    if (!b) { if (st.lanes.size > 300) st.lanes.delete(st.lanes.keys().next().value); st.lanes.set(from, b = { t: performance.now(), tok: 300, chain: Promise.resolve() }); }
+    return bucket(b, 300, 150) && bucket(st.all, 800, 500) ? b : null;
+  };
+  const check = async (topic, env) => {
+    if (!env || typeof env !== 'object' || typeof env.j !== 'string' || env.j.length > 60000 || !Number.isInteger(env.q) || !Number.isFinite(env.w)) return null;
+    if (Math.abs(Date.now() - env.w) > 120000) return null; // replayed, or a clock far off
+    const who = await verifyText(env.p, `${slug}|${topic}|${env.q}|${env.w}|${env.j}`, env.s);
+    if (!who || who.pid === ME.pid) return null;
+    try { return { who, data: JSON.parse(env.j) }; } catch (e) { return null; }
+  };
+  const out = { kind: tx.kind, selfId: ME.pid, profileName: tx.profileName, links: tx.links, leave: tx.leave };
+  out.send = (topic, data) => { st.chain = st.chain.then(() => envelope(topic, data)).then(env => { if (NET.on) tx.send(topic, env); }).catch(() => {}); };
+  // a message signed ahead of time, for moments with no time to sign (the page closing)
+  out.presign = (topic, data) => envelope(topic, data);
+  out.sendSigned = (topic, env) => tx.send(topic, env);
+  // only the newest presence matters, so at most one waits to be signed
+  let presNext = null;
+  out.presence = obj => {
+    if (presNext) { presNext.obj = obj; return; }
+    presNext = { obj };
+    st.chain = st.chain.then(async () => { const o = presNext.obj; presNext = null; const env = await envelope('pres', o); if (NET.on) tx.presence(env); }).catch(() => { presNext = null; });
+  };
+  out.on = (topic, fn) => tx.on(topic, (env, from) => {
+    const l = lane(from); if (!l) return;
+    // each connection's messages are checked in the order they came
+    l.chain = l.chain.then(() => check(topic, env)).then(r => {
+      if (!r) return;
+      let ring = st.seenQ.get(r.who.pid);
+      if (!ring) { if (st.seenQ.size > 200) st.seenQ.delete(st.seenQ.keys().next().value); st.seenQ.set(r.who.pid, ring = new Set()); }
+      if (ring.has(env.q)) return; // a copy that came the other way round
+      ring.add(env.q); if (ring.size > 3000) { const it = ring.values(); for (let k = 0; k < 1500; k++) ring.delete(it.next().value); }
+      fn(r.data, r.who.pid, r.who);
+    }).catch(() => {});
+  });
+  out.peers = () => {
+    const live = new Set(), now = performance.now();
+    for (const p of tx.peers()) {
+      const env = p.pres; if (!env || typeof env.s !== 'string') continue;
+      live.add(p.id);
+      const cur = st.pres.get(p.id);
+      if (cur?.s === env.s || st.checking.has(p.id) || (cur && now - cur.at < 40) || !bucket(st.all, 800, 500)) continue;
+      st.checking.add(p.id);
+      check('pres', env).then(r => { if (r && r.data && typeof r.data === 'object') st.pres.set(p.id, { s: env.s, at: performance.now(), q: env.q, pid: r.who.pid, code: r.who.code, pres: r.data }); }).catch(() => {}).finally(() => st.checking.delete(p.id));
+    }
+    for (const k of [...st.pres.keys()]) if (!live.has(k)) st.pres.delete(k);
+    // one entry per player: an old copy replayed by someone else loses to the newest
+    const best = new Map();
+    for (const v of st.pres.values()) { const b = best.get(v.pid); if (!b || v.q > b.q) best.set(v.pid, v); }
+    return [...best.values()].map(v => ({ id: v.pid, pres: v.pres, code: v.code }));
+  };
+  // the lobby a host keeps is signed with its key; anything else in the store is ignored
+  out.saveSnap = async o => { const j = JSON.stringify(o); await tx.saveSnap({ p: ME.pub, j, s: await signText(`snap|${slug}|${j}`) }); };
+  out.loadSnap = async () => {
+    const e = await tx.loadSnap();
+    if (!e || typeof e.j !== 'string' || e.p !== ME.pub || !await verifyText(e.p, `snap|${slug}|${e.j}`, e.s)) return null;
+    try { return JSON.parse(e.j); } catch (err) { return null; }
+  };
+  return out;
+}
+
 // Named lobbies where everyone mows the same map. On claude.ai the page talks through the artifact's live
 // room and keeps each lobby in its shared store. Anywhere else (GitHub Pages) players connect browser to
 // browser over WebRTC using Trystero's public relays, and every player keeps a copy of the lobby.
 // `?net=local` links tabs in one browser together (for testing).
-// The oldest player in the lobby is the host: in co-op it owns the shared wallet and runs the robots.
+// The host is whoever holds the key the lobby code was made from: in co-op it owns the shared wallet and runs the robots.
+// When the host leaves, the lobby closes.
 const NET = { on: false, lobby: '', mode: 'coop', coop: false, isHost: true, selfId: '', hostId: '', since: 0, name: '', color: 0, tx: null,
-  phase: 'play', roomAt: 0, peers: [], known: new Set(), blocked: new Set(), lastSackFrom: new Map(), pool: 0, grace: 0, graceAt: 0, rate: new Map(), gotSnap: false, wantTimer: 0, snapSentAt: new Map(), outCuts: [], cutTimer: 0, presTimer: 0, econKey: '', econAt: 0, econBeat: 0, persistTimer: 8, persisting: false, snapIn: new Map(), reqSeq: 0, pending: new Map(), hitAt: new Map() };
+  phase: 'play', roomAt: 0, peers: [], known: new Set(), blocked: new Set(), lastSackFrom: new Map(), led: new Map(), trust: new Map(), order: [], code: '', hostSeenAt: 0, rate: new Map(), gotSnap: false, wantTimer: 0, snapSentAt: new Map(), outCuts: [], cutTimer: 0, presTimer: 0, econKey: '', econAt: 0, econBeat: 0, persistTimer: 8, persisting: false, snapIn: new Map(), reqSeq: 0, pending: new Map(), hitAt: new Map(), earnQ: [] };
 const PLAYER_COLORS = [0xe8742c, 0x3f8fe0, 0xd04a8a, 0x2fb07a, 0xf2c230, 0x9a6ae0, 0xe04a4a, 0x40c8d0];
 const lobbySlug = s => s.toLowerCase().trim().replace(/[^a-z0-9_.-]+/g, '-').replace(/^[^a-z0-9]+/, '').slice(0, 40) || 'lobby';
 const colorFor = id => { let h = 0; for (const ch of id) h = (h * 31 + ch.charCodeAt(0)) >>> 0; return h % PLAYER_COLORS.length; };
@@ -3081,7 +3202,7 @@ function presencePump(tx, sendPres) {
   tx.peers = () => [...seen].map(([id, v]) => ({ id, pres: v.pres }));
   tx._seen = seen;
   setInterval(() => { if (tx._pres && NET.on) sendPres(tx._pres); const now = Date.now(); for (const [id, v] of seen) if (now - v.t > 5000) seen.delete(id); }, 1000);
-  return (pres, id) => seen.set(id, { pres, t: Date.now() });
+  return (pres, id) => { if (!seen.has(id) && seen.size >= 64) return; seen.set(id, { pres, t: Date.now() }); };
 }
 async function makeClaudeTransport(slug) {
   const lobbyRoom = await window.claude.use('room'); if (!lobbyRoom) return null;
@@ -3110,30 +3231,24 @@ async function makeP2PTransport(slug) {
   // Every message carries (sender, sequence) so one that arrives both ways is applied once.
   const appId = 'cut-above-lawn-game-v1', forceRelay = new URLSearchParams(location.search).get('p2p') === 'relay';
   const room = mod.joinRoom({ appId }, 'ca-' + slug), selfId = mod.selfId;
-  const handlers = {}, direct = new Set(), seenSeq = new Map();
+  const handlers = {}, direct = new Set(), seenIds = new Set();
   let seq = 0, outbox = [], lastBeacon = 0;
   const tx = { kind: 'p2p', selfId,
     on: (topic, fn) => { (handlers[topic] ||= []).push(fn); },
     leave: () => room.leave(),
     loadSnap: async () => readLobbyLocal(slug), saveSnap: async o => writeLobbyLocal(slug, o),
     links: () => ({ direct: direct.size, relayed: tx.peers().filter(p => !direct.has(p.id)).length }) };
-  const relayKey = new Map(), lastDirect = new Map(); // relay-only players are bound to the signing key of the first message they send
+  // Who sent what is proved by each message's signature (see secureTx); here we only drop copies that arrive
+  // both directly and by relay. The signature is part of the key, so nobody can block a player's messages by
+  // guessing their numbers.
   const dispatch = (m, via) => {
-    if (!m || typeof m !== 'object' || typeof m.t !== 'string') return;
-    if (via.peer) { m.f = via.peer; lastDirect.set(m.f, performance.now()); } // direct link: the connection names the sender
-    else {
-      if (performance.now() - (lastDirect.get(m.f) || -1e9) < 3000) return; // they're talking to us directly, so a relayed copy claiming to be them is ignored
-      const bound = relayKey.get(m.f);
-      if (bound && bound !== via.key) return; // someone else is using their name
-      if (!bound) relayKey.set(m.f, via.key);
-    }
+    if (!m || typeof m !== 'object' || typeof m.t !== 'string' || typeof m.f !== 'string' || m.f.length > 40) return;
+    if (via.peer) m.f = via.peer; // direct link: the connection names the sender
     if (m.f === selfId) return;
-    let ring = seenSeq.get(m.f);
-    if (!ring) seenSeq.set(m.f, ring = new Set());
-    if (ring.has(m.q)) return;
-    ring.add(m.q);
-    if (ring.size > 4000) { const it = ring.values(); for (let k = 0; k < 2000; k++) ring.delete(it.next().value); }
-    if (m.t === 'pres') seen(m.d, m.f); else (handlers[m.t] || []).forEach(fn => fn(m.d, m.f));
+    const id = m.f + ':' + m.q + ':' + String(m.d?.s).slice(0, 24);
+    if (seenIds.has(id)) return;
+    seenIds.add(id); if (seenIds.size > 20000) { const it = seenIds.values(); for (let k = 0; k < 10000; k++) seenIds.delete(it.next().value); }
+    if (m.t === 'pres') seen(m.d, m.f + ':' + String(m.d?.p).slice(0, 24)); else (handlers[m.t] || []).forEach(fn => fn(m.d, m.f));
   };
   const msg = room.makeAction('m');
   msg.onMessage = (data, meta) => dispatch(data, { peer: meta?.peerId ?? meta });
@@ -3170,7 +3285,7 @@ async function makeP2PTransport(slug) {
     try {
       hookSockets();
       let batch = [], size = 0;
-      while (outbox.length && size < 40000) { const m = outbox.shift(), len = JSON.stringify(m).length; batch.push(m); size += len; }
+      while (outbox.length && size < 14000) { const m = outbox.shift(), len = JSON.stringify(m).length; batch.push(m); size += len; }
       const ev = await mod.createEvent(relayTopic, JSON.stringify(batch));
       for (const ws of Object.values(mod.getRelaySockets())) if (ws.readyState === 1) try { ws.send(ev); } catch (e) {}
     } catch (e) {}
@@ -3191,8 +3306,8 @@ function makeLocalTransport(slug) {
   const seen = presencePump(tx, pres => bc.postMessage({ topic: 'pres', data: pres, from: selfId }));
   bc.onmessage = e => {
     const m = e.data; if (!m || m.from === selfId) return;
-    if (m.topic === 'pres') seen(m.data, m.from);
-    else if (m.topic === 'bye') tx._seen.delete(m.from);
+    if (m.topic === 'pres') seen(m.data, m.from + ':' + String(m.data?.p).slice(0, 24));
+    else if (m.topic === 'bye') { for (const k of [...tx._seen.keys()]) if (k.startsWith(m.from + ':')) tx._seen.delete(k); }
     else (handlers[m.topic] || []).forEach(fn => fn(m.data, m.from));
   };
   return tx;
@@ -3233,11 +3348,11 @@ const econObj = () => ({ money: S.money, owned: S.owned, up: S.up, robots: S.rob
 function applyEcon(e) {
   if (!e || typeof e !== 'object') return;
   const before = { ...S.owned }, outBefore = S.outposts.join();
-  S.money = +e.money || 0; S.stats.earned = +e.earned || 0;
-  S.up = Object.assign(fresh().up, e.up || {});
-  S.robots = (e.robots || []).filter(id => ROBOTS.find(r => r.id === id));
+  S.money = num(e.money, 0, 1e13); S.stats.earned = num(e.earned, 0, 1e13);
+  S.up = cleanUp(e.up);
+  S.robots = (Array.isArray(e.robots) ? e.robots : []).filter(id => ROBOTS.find(r => r.id === id)).slice(0, ROBOT_MAX * ROBOTS.length);
   if (Array.isArray(e.outposts) && e.outposts.length === OUTPOSTS.length) S.outposts = e.outposts.map(Boolean);
-  S.owned = Object.assign({ scissors: true }, e.owned || {});
+  S.owned = cleanOwned(e.owned);
   let k = 0;
   for (const t of TOOLS) {
     if (S.owned[t.id] && !before[t.id] && !t.pocket && S.held !== t.id && !S.toolAt[t.id]) { S.toolAt[t.id] = { x: SHED.x - 5 - 2.2 * k++, z: SHED.z + 5, yaw: 0 }; spawnToolMesh(t.id); }
@@ -3249,6 +3364,7 @@ function applyEcon(e) {
 }
 function netRequest(req) {
   const rq = ++NET.reqSeq; NET.pending.set(rq, req);
+  if (NET.pending.size > 50) NET.pending.delete(NET.pending.keys().next().value);
   netSend('req', { ...req, rq, to: NET.hostId });
 }
 const NOTE_VERB = { tool: 'bought the', sellTool: 'sold the', robot: 'deployed a', sellRobot: 'sold a', outpost: 'built the', sellOutpost: 'sold the', up: 'upgraded', sellUp: 'sold a level of' };
@@ -3261,6 +3377,8 @@ function netNote(act, id, who) {
 async function buildSnap() {
   const o = { mode: NET.mode, dayT: S.dayT, cut: await packCut(), at: Date.now() };
   o.bosses = { beaten: S.beaten, wipes: S.wipes };
+  o.blocked = [...NET.blocked].slice(0, 100);
+  if (NET.coop) o.led = [...NET.led].map(([k, v]) => [k, +v.toFixed(4)]);
   if (NET.coop) { o.econ = econObj(); o.sacks = S.sacks.map(s => ({ id: s.id, x: s.x, z: s.z, n: s.n, v: s.v })); }
   return o;
 }
@@ -3268,8 +3386,11 @@ async function applySnap(sn, fromHost) {
   if (!sn || typeof sn !== 'object') return;
   if (sn.mode === 'coop' || sn.mode === 'own') setMode(sn.mode);
   if (typeof sn.dayT === 'number') S.dayT = sn.dayT % 1;
-  if (NET.coop && sn.econ && (fromHost || NET.isHost)) applyEcon(sn.econ);
-  if (NET.coop && Array.isArray(sn.sacks)) for (const s of sn.sacks) if (isFinite(s.x) && isFinite(s.z)) addSack({ id: String(s.id), x: s.x, z: s.z, n: +s.n || 0, v: +s.v || 0 }, true);
+  if (NET.coop && sn.econ && fromHost) applyEcon(sn.econ);
+  if (NET.coop && Array.isArray(sn.sacks)) for (const s of sn.sacks.slice(0, MAX_SACKS)) if (sackOk(s)) addSack({ id: String(s.id).slice(0, 12), x: s.x, z: s.z, n: +s.n, v: +s.v }, true);
+  // the host's own records: who owns how much credit, and who was kicked
+  if (NET.isHost && Array.isArray(sn.led)) for (const e of sn.led.slice(0, 64)) if (Array.isArray(e) && typeof e[0] === 'string' && +e[1] > 0) NET.led.set(e[0].slice(0, 32), +e[1]);
+  if (NET.isHost && Array.isArray(sn.blocked)) for (const id of sn.blocked.slice(0, 100)) if (typeof id === 'string') NET.blocked.add(id.slice(0, 32));
   if (sn.bosses && typeof sn.bosses === 'object') {
     // a zone that regrew after a lost boss fight stays regrown, even if an older copy of the map had it mowed
     for (let t = 1; t <= 6; t++) {
@@ -3409,12 +3530,37 @@ function updateAvatars(dt) {
 // Nothing here can stop someone editing their own copy of the game. These checks stop that copy from changing
 // anyone else's: cuts must happen next to the sender or their robots at a believable rate, the co-op host pays
 // out only money backed by grass it saw cut, and only the host can speak for the shared wallet.
-function rateOk(from, cost = 1) {
+function rateOk(from, cost = 1, cap = 400, rate = 120) {
   const now = performance.now(); let b = NET.rate.get(from);
-  if (!b) NET.rate.set(from, b = { t: now, tokens: 400 });
-  b.tokens = Math.min(400, b.tokens + (now - b.t) / 1000 * 120); b.t = now; // ~120 messages a second, bursts of 400
+  if (!b) { capMap(NET.rate, 300); NET.rate.set(from, b = { t: now, tokens: cap }); }
+  b.tokens = Math.min(cap, b.tokens + (now - b.t) / 1000 * rate); b.t = now; // by default ~120 messages a second, bursts of 400
   if (b.tokens < cost) return false;
   b.tokens -= cost; return true;
+}
+// per-player records never grow without bound
+const capMap = (m, n) => { while (m.size >= n) m.delete(m.keys().next().value); };
+// Where a player can really be: their reported position, but never moving faster than the fastest gear allows
+// (respawns land at the shed). Cuts, sales, bag drops and hits are judged from here.
+const MAX_SPEED = 20;
+function trustPos(id, pr) {
+  if (!pr || !Number.isFinite(pr.x) || !Number.isFinite(pr.z)) return NET.trust.get(id) || null;
+  const now = performance.now(); let tp = NET.trust.get(id);
+  if (!tp) { capMap(NET.trust, 64); NET.trust.set(id, tp = { x: pr.x, z: pr.z, t: now }); return tp; }
+  const dt = Math.min(2, (now - tp.t) / 1000), dx = pr.x - tp.x, dz = pr.z - tp.z, d = Math.hypot(dx, dz), max = MAX_SPEED * dt + 1.5;
+  tp.t = now;
+  if (d <= max || Math.hypot(pr.x - SHED.x, pr.z - SHED.z) < 6) { tp.x = pr.x; tp.z = pr.z; }
+  else { tp.x += dx / d * max; tp.z += dz / d * max; }
+  return tp;
+}
+const onBuiltPad = tp => { const d = tp && nearestDepotTo(tp.x, tp.z); return !!d && Math.hypot(tp.x - d.x, tp.z - d.z) < 4.5; };
+// The co-op host's ledger: each player's credit is the value of the grass the host saw them cut (plus bags they
+// picked up, minus bags they dropped). Their sales, bag drops and bets are paid only from their own credit.
+// It's saved with the lobby, so a bag you leave with is still good when you come back.
+function credit(pid, v) { if (!(v > 0)) return; if (!NET.led.has(pid)) capMap(NET.led, 64); NET.led.set(pid, (NET.led.get(pid) || 0) + v); }
+function claimCredit(pid, cash) {
+  const have = (NET.led.get(pid) || 0) * sellMult(), ok = Math.max(0, Math.min(+cash || 0, have));
+  NET.led.set(pid, Math.max(0, (NET.led.get(pid) || 0) - ok / sellMult()));
+  return ok;
 }
 const presOf = id => NET.peers.find(p => p.id === id)?.pres;
 function coopMaxTier() {
@@ -3423,42 +3569,45 @@ function coopMaxTier() {
   for (const id of S.robots) { const r = ROBOTS.find(r => r.id === id); if (r?.tier) t = Math.max(t, r.tier); }
   return t;
 }
-function cutPlausible(pr, i, maxTier) {
+function cutPlausible(tp, pr, i, maxTier) {
   if (i < 0 || i >= NC || !gTier[i] || gTier[i] > maxTier) return false;
   const x = cellX(i % N), z = cellX((i / N) | 0);
-  if ((x - pr.x) ** 2 + (z - pr.z) ** 2 < 144) return true; // within 12 m of the player (covers reach, deck size and lag)
-  return Array.isArray(pr.r) && pr.r.some(r => (x - r[1] / 10) ** 2 + (z - r[2] / 10) ** 2 < 36); // or 6 m of one of their robots
+  if ((x - tp.x) ** 2 + (z - tp.z) ** 2 < 144) return true; // within 12 m of where they can really be (covers reach, deck size and lag)
+  // with own wallets players run their own robots; in co-op the host runs them all, so robot positions from others mean nothing
+  return !NET.coop && Array.isArray(pr.r) && pr.r.slice(0, 40).some(r => (x - r[1] / 10) ** 2 + (z - r[2] / 10) ** 2 < 36);
 }
-// the co-op host's ledger: money for other players' sales comes out of the value of grass they were seen cutting
-function claimPool(v) { const ok = Math.max(0, Math.min(v, NET.pool + 1e-9)); NET.pool = Math.max(0, NET.pool - ok); return ok; }
-const bagWorth = () => bagCap() * TIERS[Math.min(6, coopMaxTier())].value * sellMult();
 function wireNet(tx0) {
-  // nothing from a kicked player gets through
-  const tx = { on: (topic, fn) => tx0.on(topic, (d, from) => { if (!NET.blocked.has(from)) fn(d, from); }) };
+  // nothing from a kicked player gets through, and everyone is rate-limited
+  const tx = { on: (topic, fn) => tx0.on(topic, (d, from) => { if (!NET.blocked.has(from) && rateOk(from)) fn(d, from); }) };
   tx.on('cut', (d, from) => {
     if (!Array.isArray(d?.c) || !rateOk(from, Math.ceil(d.c.length / 20))) return;
-    const pr = presOf(from); if (!pr) return;
-    const maxT = NET.coop ? coopMaxTier() : 6, credit = NET.coop && NET.isHost;
+    const pr = presOf(from), tp = trustPos(from, pr); if (!pr || !tp) return;
+    const maxT = NET.coop ? coopMaxTier() : 6, mine = NET.coop && NET.isHost;
     for (const i of d.c.slice(0, 350)) {
-      if (!Number.isInteger(i) || !gUncut[i] || !cutPlausible(pr, i, maxT)) continue;
-      if (credit) NET.pool += TIERS[gTier[i]].value * sellMult();
+      // a believable cutting rate: about what the widest, fastest mower can do
+      // the host's robots cut far from the host, and the host's word is proved by its key
+      if (!Number.isInteger(i) || !gUncut[i] || (from === NET.hostId ? !gTier[i] : !cutPlausible(tp, pr, i, maxT) || !rateOk(from + ':cells', 1, 1200, 400))) continue;
+      if (mine) credit(from, TIERS[gTier[i]].value);
       applyRemoteCut(i);
     }
   });
   tx.on('snap', (d, from) => {
-    if (!d || d.to !== NET.selfId || typeof d.d !== 'string' || from !== NET.hostId || d.d.length > 4000 || !(d.n <= 400)) return;
+    if (!d || d.to !== NET.selfId || typeof d.d !== 'string' || from !== NET.hostId || d.d.length > 4000 || !Number.isInteger(d.n) || d.n < 1 || d.n > 400 || !Number.isInteger(d.i) || d.i < 0 || d.i >= d.n) return;
     let e = NET.snapIn.get(d.sid);
-    if (!e) { e = { parts: [], got: 0, n: d.n }; NET.snapIn.set(d.sid, e); }
+    if (!e) { capMap(NET.snapIn, 3); e = { parts: [], got: 0, n: d.n }; NET.snapIn.set(d.sid, e); }
     if (e.parts[d.i] === undefined) { e.parts[d.i] = d.d; e.got++; }
     if (e.got === e.n) { NET.snapIn.delete(d.sid); try { NET.gotSnap = true; applySnap(JSON.parse(e.parts.join('')), true); } catch (err) {} }
   });
-  tx.on('want', (d, from) => { if (NET.isHost && d?.to === NET.selfId && rateOk(from, 20)) sendSnapTo(from); });
+  tx.on('want', (d, from) => { if (NET.isHost && d?.to === NET.selfId && presOf(from) && rateOk(from, 20)) sendSnapTo(from); });
   tx.on('econ', (d, from) => { if (NET.coop && !NET.isHost && from === NET.hostId) applyEcon(d); });
   tx.on('req', (d, from) => {
     // anyone at the roulette table can ask the host to spin, in either mode
-    if (d?.k === 'spin') { if (NET.isHost && (!d.to || d.to === NET.selfId) && rateOk(from, 5) && RLS.phase === 'idle') hostSpin(true); return; }
-    if (!NET.isHost || !NET.coop || !d || (d.to && d.to !== NET.selfId) || !rateOk(from, 5)) return;
-    if (d.k === 'earn') { const v = claimPool(+d.v > 0 ? +d.v : 0); S.money += v; S.stats.earned += v; return; }
+    if (!NET.isHost || d?.to !== NET.selfId || !presOf(from) || !rateOk(from, 5)) return;
+    if (d.k === 'spin') { if (RLS.phase === 'idle') hostSpin(true); return; }
+    if (!NET.coop) return;
+    // a sale: only from someone standing on a drop-off pad, and only out of their own credit
+    // (the sale can arrive just before the position that puts them on the pad, so it waits a moment for it)
+    if (d.k === 'earn') { if (NET.earnQ.length < 40) NET.earnQ.push({ from, v: +d.v || 0, until: performance.now() + 2000 }); return; }
     if (d.k === 'shop') {
       const ok = econAct(d.act, d.id);
       if (ok) afterShop(d.act, d.id, false);
@@ -3468,29 +3617,31 @@ function wireNet(tx0) {
   });
   tx.on('ack', (d, from) => {
     if (!d || d.to !== NET.selfId || from !== NET.hostId || !NET.pending.has(d.rq)) return;
-    NET.pending.delete(d.rq);
-    if (d.ok) { isSale(d.act) ? sellSound() : buySound(); afterShop(d.act, d.id, true); }
+    // act on what we asked for, not on what the answer claims
+    const req = NET.pending.get(d.rq); NET.pending.delete(d.rq);
+    if (d.ok) { isSale(req.act) ? sellSound() : buySound(); afterShop(req.act, req.id, true); }
     else { denySound(); toast('The shared wallet couldn\'t cover that', 'warn'); }
   });
   tx.on('sack', (d, from) => {
     if (!NET.coop || !d || !rateOk(from, 3)) return;
+    const tp = trustPos(from, presOf(from)); if (!tp) return;
     if (d.op === 'add') {
       // ignore drops that break the bag limits (too small, too fast, too many)
       const now = performance.now(), last = NET.lastSackFrom.get(from) || -1e9;
-      if (!d.s || !(+d.s.n >= MIN_DROP) || now - last < 1200 || S.sacks.length >= MAX_SACKS || S.sacks.filter(o => o.by === from).length >= MAX_SACKS_EACH) return;
+      if (!d.s || (from !== NET.hostId && (!(+d.s.n >= MIN_DROP) || now - last < 1200 || S.sacks.length >= MAX_SACKS || S.sacks.filter(o => o.by === from).length >= MAX_SACKS_EACH))) return;
+      if (!NET.lastSackFrom.has(from)) capMap(NET.lastSackFrom, 64);
       NET.lastSackFrom.set(from, now);
     }
-    if (d.op === 'add' && d.s && isFinite(d.s.x) && isFinite(d.s.z) && Math.hypot(d.s.x, d.s.z) < R_MAP) {
-      // a dropped bag holds at most a full bag of the best grass; on the host it can't be worth more than the ledger backs
-      const n = Math.max(0, Math.min(+d.s.n || 0, BAG_LEVELS[BAG_LEVELS.length - 1]));
-      let v = Math.max(0, Math.min(+d.s.v || 0, n * TIERS[6].value));
-      if (NET.isHost) v = Math.min(v, NET.pool);
-      addSack({ id: String(d.s.id).slice(0, 12), x: d.s.x, z: d.s.z, n, v, o: NET.isHost ? 1 : 0, by: from }, true);
+    // bags are dropped and picked up next to the player, and on the host they move value between ledgers
+    const nearby = (x, z) => from === NET.hostId || Math.hypot(x - tp.x, z - tp.z) < 4; // the host's collector robots move bags far from the host
+    if (d.op === 'add' && d.s && sackOk(d.s) && nearby(d.s.x, d.s.z)) {
+      let v = +d.s.v;
+      if (NET.isHost) { v = Math.min(v, NET.led.get(from) || 0); NET.led.set(from, Math.max(0, (NET.led.get(from) || 0) - v)); }
+      addSack({ id: String(d.s.id).slice(0, 12), x: d.s.x, z: d.s.z, n: +d.s.n, v, by: from }, true);
     }
     if (d.op === 'del') {
-      const s = S.sacks.find(o => o.id === d.id); if (!s) return;
-      // someone else took a bag the host dropped: its value can now be sold through the ledger
-      if (NET.isHost && !s.o) NET.pool += s.v * sellMult();
+      const s = S.sacks.find(o => o.id === d.id); if (!s || !nearby(s.x, s.z)) return;
+      if (NET.isHost) credit(from, s.v);
       takeSack(s, true);
     }
   });
@@ -3502,9 +3653,12 @@ function wireNet(tx0) {
   // hits on the boss from other players: capped by what their tool could do in the time since their last hit
   tx.on('hit', (d, from) => {
     if (!NET.isHost || !bossAlive() || d?.i !== BOSS.i) return;
-    const pr = presOf(from); if (!pr || pr.ko || Math.hypot(pr.x - BOSS.x, pr.z - BOSS.z) > BOSSES[BOSS.t].r + 9) return;
-    const now = performance.now(), el = Math.min(1, Math.max(0.05, (now - (NET.hitAt.get(from) || now - 200)) / 1000)); NET.hitAt.set(from, now);
-    bossDamage(Math.max(0, Math.min(+d.d || 0, (toolDef(pr.t)?.power || 3) * 2.6 * el)));
+    const pr = presOf(from), tp = trustPos(from, pr); if (!pr || !tp || pr.ko || Math.hypot(tp.x - BOSS.x, tp.z - BOSS.z) > BOSSES[BOSS.t].r + 9) return;
+    const now = performance.now(), el = Math.min(1, Math.max(0.05, (now - (NET.hitAt.get(from) || now - 200)) / 1000));
+    if (!NET.hitAt.has(from)) capMap(NET.hitAt, 64); NET.hitAt.set(from, now);
+    // in co-op the host knows the shared gear, so nobody can claim a tool the lobby doesn't own
+    const tool = toolDef(pr.t) && (!NET.coop || S.owned[pr.t]) ? toolDef(pr.t) : toolDef('scissors');
+    bossDamage(Math.max(0, Math.min(+d.d || 0, tool.power * 2.6 * el)));
   });
   // the host's word on how a boss fight ended
   tx.on('boss', (d, from) => {
@@ -3526,7 +3680,7 @@ function wireNet(tx0) {
 // Sent 20 times a second on its own timer so a slow frame rate doesn't slow everyone else's view of you.
 function sendPresence() {
   if (!NET.on) return;
-  const pres = { n: NET.name, c: NET.color, s: NET.since, x: +P.x.toFixed(2), z: +P.z.toFixed(2), vx: +P.vx.toFixed(2), vz: +P.vz.toFixed(2), y: +P.yaw.toFixed(2), t: S.tool, k: S.carry.length, ph: NET.phase, m: NET.mode, bv: +(S.bagValue + carryValue()).toFixed(2) };
+  const pres = { n: NET.name, c: NET.color, x: +P.x.toFixed(2), z: +P.z.toFixed(2), vx: +P.vx.toFixed(2), vz: +P.vz.toFixed(2), y: +P.yaw.toFixed(2), t: S.tool, k: S.carry.length, ph: NET.phase, m: NET.mode };
   if (robots.length) pres.r = robots.slice(0, 40).map(r => [ROBOTS.indexOf(r.model), Math.round(r.x * 10), Math.round(r.z * 10), Math.round(r.h * 100)]);
   if (NET.isHost) pres.d = +S.dayT.toFixed(4);
   if (S.bets.length) pres.rb = rlMyBets().map(b => [b[0], b[1], +b[2].toFixed(2)]);
@@ -3538,13 +3692,21 @@ function sendPresence() {
 setInterval(sendPresence, 50);
 function netTick(dt) {
   if (!NET.on) return;
-  NET.peers = NET.tx.peers().filter(p => p.pres && typeof p.pres === 'object' && !NET.blocked.has(p.id));
-  // the earliest arrival is host
-  let hostId = NET.selfId, hostSince = NET.since;
-  for (const p of NET.peers) { const s = +p.pres.s || Infinity; if (s < hostSince || (s === hostSince && p.id < hostId)) { hostSince = s; hostId = p.id; } }
-  const wasHost = NET.isHost;
-  NET.hostId = hostId; NET.isHost = hostId === NET.selfId;
-  if (wasHost !== NET.isHost && NET.coop) { syncRobotSims(); if (NET.isHost) { NET.grace = 2 * bagWorth(); toast('You are now hosting this lobby', '', 2.4); } }
+  // the host is whoever holds the key behind the lobby code; at most 8 players, first come first served
+  const all = NET.tx.peers().filter(p => p.pres && typeof p.pres === 'object' && !NET.blocked.has(p.id));
+  for (const p of all) if (!NET.order.includes(p.id)) { NET.order.push(p.id); if (NET.order.length > 200) NET.order.shift(); }
+  const host = all.find(p => p.code === NET.code);
+  NET.peers = all.filter(p => p !== host).sort((a, b) => NET.order.indexOf(a.id) - NET.order.indexOf(b.id)).slice(0, host || NET.isHost ? 7 : 6);
+  if (host) NET.peers.unshift(host);
+  const hostId = NET.isHost ? NET.selfId : host?.id || '';
+  NET.hostId = hostId;
+  for (const p of NET.peers) trustPos(p.id, p.pres);
+  // no host, no lobby: it closes when the host leaves
+  if (NET.isHost && performance.now() - (NET.closeAt || 0) > 60000) { NET.closeAt = performance.now(); NET.tx.presign('close', {}).then(env => NET.closeEnv = env).catch(() => {}); }
+  if (!NET.isHost) {
+    if (host) NET.hostSeenAt = performance.now();
+    else if (performance.now() - NET.hostSeenAt > 90000) { leaveLobby('The host left, so the lobby closed.'); return; } // a host that quits says so; this is for crashes and lost connections
+  }
   if (!NET.isHost) { const hp = NET.peers.find(p => p.id === hostId); if (typeof hp?.pres?.d === 'number') S.dayT = hp.pres.d % 1; }
   // in the lobby room: follow the host's mode, start when the host starts, keep the room screen current
   if (NET.phase === 'room') {
@@ -3553,16 +3715,22 @@ function netTick(dt) {
     if (performance.now() - NET.roomAt > 400) { NET.roomAt = performance.now(); renderRoom(); }
   }
   // the host hands every newcomer the lobby as it stands
-  if (NET.coop && NET.isHost) { const now = performance.now(), w = bagWorth(); NET.grace = Math.min(2 * w, NET.grace + (now - (NET.graceAt || now)) / 600000 * w); NET.graceAt = now; }
+  // sales waiting for the seller to show up on a pad
+  if (NET.isHost && NET.earnQ.length) {
+    const now = performance.now();
+    NET.earnQ = NET.earnQ.filter(q => {
+      if (onBuiltPad(NET.trust.get(q.from))) { const v = claimCredit(q.from, q.v); S.money += v; S.stats.earned += v; return false; }
+      return now < q.until;
+    });
+  }
   for (const p of NET.peers) if (!NET.known.has(p.id)) {
+    if (NET.known.size > 200) NET.known.clear();
     NET.known.add(p.id);
-    if (!NET.isHost) continue;
-    sendSnapTo(p.id);
-    if (NET.coop) { const g = Math.min(Math.max(0, +p.pres.bv || 0) * sellMult(), bagWorth(), NET.grace); NET.pool += g; NET.grace -= g; }
+    if (NET.isHost) sendSnapTo(p.id);
   }
   // a newcomer keeps asking the host for the lobby until a copy arrives (the first one can be lost while links come up)
   NET.wantTimer -= dt;
-  if (!NET.isHost && !NET.gotSnap && NET.wantTimer <= 0) { NET.wantTimer = 3; netSend('want', { to: hostId }); }
+  if (!NET.isHost && hostId && !NET.gotSnap && NET.wantTimer <= 0) { NET.wantTimer = 3; netSend('want', { to: hostId }); }
   // my presence: where I am, what I'm holding, the robots I run, and (as host) the clock
   // grass I (or my robots) cut, in batches
   NET.cutTimer -= dt;
@@ -3578,47 +3746,57 @@ function netTick(dt) {
   }
   // keep the lobby: on claude.ai the host writes it to the shared store; elsewhere every player keeps a copy
   NET.persistTimer -= dt;
-  if (NET.persistTimer <= 0) { NET.persistTimer = 15; if (NET.isHost || NET.tx.kind !== 'claude') persistLobby(); }
+  if (NET.persistTimer <= 0) { NET.persistTimer = 15; if (NET.isHost) persistLobby(); } // only the host keeps the lobby, signed
   updateAvatars(dt);
 }
 
 // lobby codes: five characters, no look-alikes (0/O, 1/I/L)
 const CODE_CHARS = 'ABCDEFGHJKMNPQRSTUVWXYZ23456789';
-const newCode = () => Array.from({ length: 5 }, () => CODE_CHARS[Math.floor(Math.random() * CODE_CHARS.length)]).join('');
-const cleanCode = s => s.toUpperCase().replace(/[^A-Z0-9]/g, '').slice(0, 7);
+const cleanCode = s => s.toUpperCase().replace(/[^A-Z0-9]/g, '').slice(0, 10);
+const codeValid = c => c.length === 10 && [...c].every(ch => CODE_CHARS.includes(ch));
 const mpStatus = (msg, err) => { $('mpStatus').textContent = msg; $('mpStatus').className = err ? 'err' : ''; };
 let mpBusy = false;
 async function openTransport(code) {
   const slug = lobbySlug(code), kind = netKind();
+  if (!window.crypto?.subtle) { mpStatus('Multiplayer needs a secure (https) page.', true); return null; }
   let tx = null;
   try { tx = kind === 'claude' ? await makeClaudeTransport(slug) : kind === 'local' ? makeLocalTransport(slug) : await makeP2PTransport(slug); } catch (e) { tx = null; }
   if (!tx) mpStatus(kind === 'claude' ? 'Multiplayer isn\'t available in this view. Open the game on claude.ai while signed in.' : 'Couldn\'t reach the multiplayer relays. Check your connection and try again.', true);
-  return tx;
+  return tx && secureTx(tx, slug);
 }
-async function hostLobby(code, nick, mode) {
-  mpStatus('Opening lobby ' + code + '…');
+// hosting makes a new key; its fingerprint is the lobby code. The key stays in this browser so you can reopen the lobby.
+async function hostLobby(nick, mode, resume) {
+  if (!window.crypto?.subtle) { mpStatus('Multiplayer needs a secure (https) page.', true); return; }
+  const key = resume?.key || await makeKey();
+  await useKey(key);
+  const code = ME.code;
+  mpStatus('Opening lobby ' + fmtCode(code) + '…');
   const tx = await openTransport(code); if (!tx) return;
-  settings.hosted = { code, mode }; saveSettings();
+  settings.hosted = { code, mode, key }; saveSettings();
   await enterLobby(tx, code, nick, mode, 'room');
 }
 async function joinLobby(code, nick) {
-  mpStatus('Looking for lobby ' + code + '…');
+  // your own lobby: reopen it as its host
+  if (settings.hosted?.code === code && settings.hosted.key) return hostLobby(nick, settings.hosted.mode || 'coop', settings.hosted);
+  if (!window.crypto?.subtle) { mpStatus('Multiplayer needs a secure (https) page.', true); return; }
+  await useKey(await playerKey());
+  mpStatus('Looking for lobby ' + fmtCode(code) + '…');
   const tx = await openTransport(code); if (!tx) return;
-  // wait for the host (or anyone already playing) to show up before leaving solo play
-  for (let t = 0; t < 40 && !tx.peers().length; t++) { await new Promise(r => setTimeout(r, 500)); if (t % 2) mpStatus(`Looking for lobby ${code}… ${Math.round((t + 1) / 2)}s`); }
-  if (!tx.peers().length) { try { tx.leave(); } catch (e) {} mpStatus(`No one is hosting ${code} right now. Check the code, and make sure the host has the game open.`, true); return; }
-  mpStatus(`Found lobby ${code}, loading the map…`);
+  // wait for the host (the player whose key matches the code) before leaving solo play
+  const hostP = () => tx.peers().find(p => p.code === code);
+  for (let t = 0; t < 40 && !hostP(); t++) { await new Promise(r => setTimeout(r, 500)); if (t % 2) mpStatus(`Looking for lobby ${fmtCode(code)}… ${Math.round((t + 1) / 2)}s`); }
+  if (!hostP()) { try { tx.leave(); } catch (e) {} mpStatus(`No one is hosting ${fmtCode(code)} right now. Check the code, and make sure the host has the game open.`, true); return; }
+  mpStatus(`Found lobby ${fmtCode(code)}, loading the map…`);
   await new Promise(r => setTimeout(r, 30)); // let the message paint before the world rebuilds
-  // a game already under way (or a host on an older version, which doesn't say) is joined straight away
-  const started = tx.peers().some(p => p.pres && p.pres.ph !== 'room');
-  await enterLobby(tx, code, nick, 'coop', started ? 'play' : 'room'); // the host's snapshot sets the real mode
-  if (started) toast(`Joined lobby ${code}`, 'good', 2.5);
+  const started = hostP().pres.ph !== 'room';
+  await enterLobby(tx, code, nick, hostP().pres.m === 'own' ? 'own' : 'coop', started ? 'play' : 'room'); // the host's snapshot confirms the mode
+  if (started) toast(`Joined lobby ${fmtCode(code)}`, 'good', 2.5);
 }
 async function enterLobby(tx, code, nick, mode, phase = 'play') {
   const slug = lobbySlug(code);
   // swap the solo world for this lobby's
   save();
-  NET.tx = tx; NET.on = true; NET.lobby = code; NET.selfId = tx.selfId; NET.since = Date.now();
+  NET.tx = tx; NET.on = true; NET.code = code; NET.lobby = fmtCode(code); NET.selfId = tx.selfId; NET.isHost = ME.code === code; NET.hostId = NET.isHost ? NET.selfId : ''; NET.hostSeenAt = performance.now();
   NET.name = (nick || tx.profileName || 'Mower').slice(0, 16); NET.color = colorFor(NET.selfId);
   setMode(mode);
   saveKey = 'cutabove_mp_' + slug;
@@ -3635,10 +3813,9 @@ async function enterLobby(tx, code, nick, mode, phase = 'play') {
   for (const s of S.sacks) spawnSackMesh(s);
   for (const id in S.toolAt) spawnToolMesh(id);
   wireNet(tx);
-  const stored = await tx.loadSnap();
-  if (stored) await applySnap(stored, false);
+  // the host reopens the lobby it kept (only its own signed copy counts); everyone else waits for the host's
+  if (NET.isHost) { const stored = await tx.loadSnap(); if (stored) await applySnap(stored, true); }
   syncRobotSims(); syncTool(); updateLOD(1, Infinity);
-  NET.grace = 2 * bagWorth();
   mpStatus('');
   NET.phase = phase;
   if (phase === 'play') startPlaying(); else showRoom();
@@ -3672,6 +3849,8 @@ function blockPlayer(id) {
   for (const s of [...S.sacks]) if (s.by === id) takeSack(s, true); // their bags disappear for everyone
   renderPlayers();
 }
+// a host closing the tab tells everyone straight away, with a close message signed earlier
+addEventListener('pagehide', () => { if (NET.on && NET.isHost && NET.closeEnv) try { NET.tx.sendSigned('close', NET.closeEnv); } catch (e) {} });
 function leaveLobby(note) {
   save();
   try { if (note) sessionStorage.setItem('cutabove_note', note); } catch (e) {}
@@ -3687,14 +3866,14 @@ function leaveLobby(note) {
   const nameIn = $('mpName'), codeIn = $('mpCodeIn');
   nameIn.value = settings.name || '';
   const resume = $('mpResume');
-  if (settings.hosted?.code) { resume.hidden = false; resume.textContent = `Resume lobby ${settings.hosted.code}`; }
+  if (settings.hosted?.code && settings.hosted.key) { resume.hidden = false; resume.textContent = `Resume lobby ${fmtCode(settings.hosted.code)}`; } // older lobbies had no host key and can't be reopened
   const go = async fn => { if (mpBusy) return; mpBusy = true; settings.name = nameIn.value.trim(); saveSettings(); initAudio(); try { await fn(); } finally { mpBusy = false; } };
-  $('mpHost').addEventListener('click', () => go(() => hostLobby(newCode(), nameIn.value.trim(), 'coop')));
-  resume.addEventListener('click', () => go(() => hostLobby(settings.hosted.code, nameIn.value.trim(), settings.hosted.mode || 'coop')));
-  codeIn.addEventListener('input', () => { codeIn.value = cleanCode(codeIn.value); });
+  $('mpHost').addEventListener('click', () => go(() => hostLobby(nameIn.value.trim(), 'coop')));
+  resume.addEventListener('click', () => go(() => hostLobby(nameIn.value.trim(), settings.hosted.mode || 'coop', settings.hosted)));
+  codeIn.addEventListener('input', () => { const c = cleanCode(codeIn.value); codeIn.value = c.length > 5 ? fmtCode(c.padEnd(10, ' ')).trimEnd() : c; });
   const join = () => {
     const code = cleanCode(codeIn.value);
-    if (code.length < 4) { mpStatus('Type the lobby code your host gave you.', true); codeIn.focus(); return; }
+    if (!codeValid(code)) { mpStatus('Type the 10-character lobby code your host gave you.', true); codeIn.focus(); return; }
     go(() => joinLobby(code, nameIn.value.trim()));
   };
   $('mpJoin').addEventListener('click', join);
@@ -3703,7 +3882,7 @@ function leaveLobby(note) {
     const done = msg => { $('mpCopied').textContent = msg; setTimeout(() => $('mpCopied').textContent = '', 2000); };
     navigator.clipboard?.writeText(NET.lobby).then(() => done('Copied'), () => { getSelection().selectAllChildren($('mpCode')); done('Press Ctrl+C to copy'); }) ?? (getSelection().selectAllChildren($('mpCode')), done('Press Ctrl+C to copy'));
   });
-  $('mpLeave').addEventListener('click', () => leaveLobby());
+  $('mpLeave').addEventListener('click', () => { if (NET.isHost) { netSend('close', {}); setTimeout(() => leaveLobby(), 400); } else leaveLobby(); }); // the lobby closes when its host leaves
   $('menuBtn').addEventListener('click', () => { save(); location.reload(); });
   $('roomStart').addEventListener('click', () => { if (NET.isHost) beginPlay(); });
   $('roomLeave').addEventListener('click', () => { if (NET.isHost) { netSend('close', {}); setTimeout(() => leaveLobby(), 400); } else leaveLobby(); }); // a host leaving the room closes it
