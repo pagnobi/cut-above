@@ -61,6 +61,16 @@ body { background: #0f1a0d; color: var(--ink); font-family: var(--body); font-si
 .slot.away { border-style: dashed; }
 .slot svg { width: 30px; height: 30px; }
 
+#bossBar { left: 50%; top: calc(14px + env(safe-area-inset-top, 0px)); transform: translateX(-50%); width: min(440px, 42vw); display: grid; gap: 4px; justify-items: center; }
+#bossName { font-family: var(--display); font-size: 18px; color: #ffd2c8; text-shadow: 0 2px 0 #300; letter-spacing: .04em; }
+#bossTrack { width: 100%; height: 16px; background: rgba(0,0,0,.55); border: 2px solid #ff5a4a; border-radius: 9px; overflow: hidden; }
+#bossFill { height: 100%; width: 100%; background: linear-gradient(#ff7a5a, #d8261c); transition: width .15s linear; }
+#hpWrap { display: flex; align-items: center; gap: 10px; background: var(--panel); border: 1px solid var(--line); border-radius: 8px; padding: 5px 12px; }
+#hpLabel { font-family: var(--display); font-size: 12px; letter-spacing: .04em; color: var(--ink-dim); }
+#hpTrack { width: 200px; height: 12px; background: rgba(0,0,0,.45); border-radius: 6px; overflow: hidden; }
+#hpFill { height: 100%; width: 100%; background: #ff5a4a; border-radius: 6px; transition: width .12s linear; }
+#hurt { inset: 0; background: radial-gradient(ellipse at center, transparent 45%, rgba(220,20,10,.65)); opacity: 0; z-index: 4; }
+#koNote { left: 50%; top: 40%; transform: translateX(-50%); font-family: var(--display); font-size: 22px; text-align: center; background: var(--panel); border: 1px solid var(--stop); border-radius: 12px; padding: 12px 20px; max-width: 80vw; }
 #crosshair { left: 50%; top: 50%; width: 6px; height: 6px; margin: -3px 0 0 -3px; border-radius: 50%; background: rgba(255,255,255,.85); box-shadow: 0 0 0 1.5px rgba(0,0,0,.4); }
 #status { left: 50%; top: 24%; transform: translateX(-50%); text-align: center; display: grid; gap: 6px; justify-items: center; }
 .pill { background: var(--panel); border: 1px solid var(--line); border-radius: 999px; padding: 6px 16px; font-weight: 700; font-size: 17px; }
@@ -75,6 +85,7 @@ body { background: #0f1a0d; color: var(--ink); font-family: var(--body); font-si
 #compass { left: 50%; top: calc(14px + env(safe-area-inset-top, 0px)); transform: translateX(-50%); }
 #compass .pill { display: flex; align-items: center; gap: 8px; }
 #compassArrow { width: 22px; height: 22px; }
+body.bossOn #compass { top: calc(72px + env(safe-area-inset-top, 0px)); } /* below the boss's health bar */
 .floaty { position: fixed; left: 50%; top: 45%; transform: translateX(-50%); font-family: var(--display); font-size: 30px; color: var(--cash); text-shadow: 0 2px 0 #10200b; pointer-events: none; z-index: 6; animation: floatUp 1.4s ease-out forwards; }
 @keyframes floatUp { from { opacity: 1; transform: translate(-50%, 0) } to { opacity: 0; transform: translate(-50%, -90px) } }
 
@@ -237,7 +248,11 @@ body { background: #0f1a0d; color: var(--ink); font-family: var(--body); font-si
 <div class="hud" id="toast"></div>
 <div class="hud" id="status"></div>
 <div class="hud" id="prompt" hidden></div>
+<div class="hud" id="bossBar" hidden><div id="bossName"></div><div id="bossTrack"><div id="bossFill"></div></div></div>
+<div class="hud" id="hurt"></div>
+<div class="hud" id="koNote" hidden></div>
 <div class="hud" id="hudBottom">
+  <div id="hpWrap" hidden><span id="hpLabel">HEALTH</span><div id="hpTrack"><div id="hpFill"></div></div></div>
   <div id="bagWrap"><span id="bagLabel">BAG</span><div id="bagBar"><div id="bagFill"></div></div><span id="bagText" class="num">0 / 300</span><span id="carryText" class="num"></span></div>
   <div id="hotbar"></div>
 </div>
@@ -472,6 +487,12 @@ const ACHIEVEMENTS = [
   { id: 'zone5', name: 'Jungle Leveled', desc: 'Mow the Giant Jungle to 100%' },
   { id: 'zone6', name: 'Crystal Clear', desc: 'Mow the Crystal Fields to 100%' },
   { id: 'all', name: 'A Cut Above', desc: 'Mow every blade on the map' },
+  { id: 'boss1', name: 'Rat Race Won', desc: 'Beat the Giant Rat in the Backyard' },
+  { id: 'boss2', name: 'Dog Days Over', desc: 'Beat the Guard Dog in the Suburbs' },
+  { id: 'boss3', name: 'Bear Necessities', desc: 'Beat the Grizzly Bear in the Overgrown Park' },
+  { id: 'boss4', name: 'Lion Tamer', desc: 'Beat the Thorn Lion in the Thorny Wilds' },
+  { id: 'boss5', name: 'See You Later', desc: 'Beat the Jungle Crocodile in the Giant Jungle' },
+  { id: 'boss6', name: 'Dragon Slayer', desc: 'Beat the Crystal Dragon in the Crystal Fields' },
 ];
 const SHED = { x: 6, z: -6, name: 'Compost Shed' };
 const HOUSE = { x: -9, z: 6, w: 7, d: 6 };
@@ -480,7 +501,7 @@ const HOUSE = { x: -9, z: 6, w: 7, d: 6 };
 const SAVE_KEY = 'cutabove_save_v3';
 const fresh = () => ({ money: 0, owned: { scissors: true }, pocket: 'scissors', held: null, toolAt: {}, carry: [], sacks: [], tool: 'scissors',
   up: { bag: 0, arms: 0, shoes: 0, buyer: 0, blades: 0, deck: 0, tune: 0 }, robots: [], outposts: OUTPOSTS.map(() => false),
-  stats: { cut: 0, earned: 0, time: 0 }, bag: 0, bagValue: 0, muted: false, ach: {}, cutBits: '', gridSig: '', won: false, px: 0, pz: 3, yaw: null, dayT: 0.3, upTier: 1, bets: [] });
+  stats: { cut: 0, earned: 0, time: 0 }, bag: 0, bagValue: 0, muted: false, ach: {}, cutBits: '', gridSig: '', won: false, px: 0, pz: 3, yaw: null, dayT: 0.3, upTier: 1, bets: [], beaten: [false, false, false, false, false, false, false], wipes: [0, 0, 0, 0, 0, 0, 0] });
 let S = fresh();
 function loadInto(data) {
   if (!data) return;
@@ -493,6 +514,8 @@ function loadInto(data) {
   S.toolAt = Object.assign({}, data.toolAt || {});
   S.carry = Array.isArray(data.carry) ? data.carry : [];
   S.sacks = Array.isArray(data.sacks) ? data.sacks.filter(s => isFinite(s.x) && isFinite(s.z)) : [];
+  S.beaten = f.beaten.map((v, t) => !!(Array.isArray(data.beaten) && data.beaten[t]));
+  S.wipes = f.wipes.map((v, t) => Array.isArray(data.wipes) ? Math.max(0, +data.wipes[t] || 0) : 0);
   S.bets = Array.isArray(data.bets) ? data.bets.filter(b => ['red', 'black', 'green'].includes(b?.c) && b.v > 0 && b.n > 0).slice(0, 3) : [];
   if (!Array.isArray(S.outposts) || S.outposts.length !== OUTPOSTS.length) S.outposts = f.outposts;
   S.robots = (S.robots || []).filter(id => ROBOTS.find(r => r.id === id));
@@ -515,7 +538,8 @@ const tool = () => toolDef(S.tool);
 const bagCap = () => BAG_LEVELS[S.up.bag];
 const carryMax = () => 1 + S.up.arms;
 const sellMult = () => 1 + 0.2 * S.up.buyer;
-const powerMult = () => 1 + 0.15 * S.up.blades;
+// each boss beaten adds 5% cutting power (and so damage)
+const powerMult = () => (1 + 0.15 * S.up.blades) * (1 + 0.05 * S.beaten.filter(Boolean).length);
 const widthMult = () => 1 + 0.08 * S.up.deck;
 const tuneMult = () => 1 + 0.25 * S.up.tune;
 // money shows cents below $10,000 (prices are whole dollars, so they stay clean); bigger sums round to dollars, then millions
@@ -1602,6 +1626,401 @@ function rlPrompt() {
   return lines.map(l => `<div class="pill">${l}</div>`).join('');
 }
 
+// ===================== BOSSES =====================
+// Each zone has a boss that turns up once the zone is 75% mowed; the rest of that zone can't be cut until it's beaten.
+// Your cutting tool is your weapon. Solo, getting knocked out regrows the zone. In a lobby you wait for your team,
+// and the zone regrows only if everyone goes down. The host runs the boss and shares it through its presence;
+// everyone works out for themselves whether an attack hit them, so dodging feels right on your own screen.
+const BOSS_AT = 0.75;
+const lockAt = t => Math.ceil(BOSS_AT * tierCount[t]);
+const zoneLocked = t => !!t && !S.beaten[t] && cutCount[t] >= lockAt(t);
+const BOSSES = [null,
+  { id: 'rat',    name: 'Giant Rat',        hp: 160,   dmg: 10, speed: 3.9, r: 0.8, reach: 1.1, special: null },
+  { id: 'dog',    name: 'Guard Dog',        hp: 380,   dmg: 13, speed: 4.3, r: 0.9, reach: 1.2, special: 'charge' },
+  { id: 'bear',   name: 'Grizzly Bear',     hp: 1100,  dmg: 18, speed: 3.8, r: 1.3, reach: 1.6, special: 'slam' },
+  { id: 'lion',   name: 'Thorn Lion',       hp: 2400,  dmg: 20, speed: 4.6, r: 1.2, reach: 1.6, special: 'charge' },
+  { id: 'croc',   name: 'Jungle Crocodile', hp: 6000,  dmg: 24, speed: 3.6, r: 1.4, reach: 2.0, special: 'slam' },
+  { id: 'dragon', name: 'Crystal Dragon',   hp: 15000, dmg: 28, speed: 4.2, r: 1.9, reach: 2.4, special: 'breath' },
+];
+const WIND = { bite: 0.55, slam: 1.0, charge: 0.85, breath: 0.8 };
+const SLAM_R = t => BOSSES[t].r + 3.2, CHARGE_LEN = 13, BREATH_R = 9.5, BREATH_HALF = 0.5;
+const PL = { hp: 100, max: 100, ko: false, hurtAt: -1e9, flash: 0 };
+const BOSS = { i: '', t: 0, x: 0, z: 0, dx: 0, dz: 0, yaw: 0, dyaw: 0, hp: 0, max: 0, st: 'none', stT: 0, atk: null, as: 0, sk: 0, mySk: 0, chargeHit: -1,
+  cd: 3, cool: 2, idle: 0, wx: 0, wz: 0, hx: 0, hz: 0, wipeT: 0, flash: 0, hitAcc: 0, hitT: 0, hitSnd: 0, mesh: null, meshT: 0 };
+const BOSS_LIVE = new Set(['roam', 'chase', 'windup', 'charge', 'breath', 'recover']);
+const bossAlive = () => BOSS_LIVE.has(BOSS.st);
+const bossEngaged = () => state === 'play' && bossAlive() && BOSS.st !== 'roam' && (PL.ko || Math.hypot(P.x - BOSS.dx, P.z - BOSS.dz) < 55);
+
+// ---- the six animals, built from simple shapes; forward is -z like everything else
+function beastModel(t) {
+  const root = new THREE.Group(), body = new THREE.Group(), mats = [], legs = [];
+  root.add(body);
+  const M = (c, extra) => { const m = lam(c, extra); mats.push(m); return m; };
+  const mesh = (geo, mat, x, y, z, parent = body) => { const m = new THREE.Mesh(geo, mat); m.position.set(x, y, z); parent.add(m); return m; };
+  const ball = (r, mat, x, y, z, sx = 1, sy = 1, sz = 1, parent = body) => { const m = mesh(new THREE.SphereGeometry(r, 14, 10), mat, x, y, z, parent); m.scale.set(sx, sy, sz); return m; };
+  const cone = (r, h, mat, x, y, z, rx = 0, rz = 0, parent = body) => { const m = mesh(new THREE.ConeGeometry(r, h, 8), mat, x, y, z, parent); m.rotation.set(rx, 0, rz); return m; };
+  const box = (sx, sy, sz, mat, x, y, z, parent = body) => mesh(new THREE.BoxGeometry(sx, sy, sz), mat, x, y, z, parent);
+  const eyeW = new THREE.MeshBasicMaterial({ color: 0xffffff }), eyeB = new THREE.MeshBasicMaterial({ color: 0x111111 }), eyeR = new THREE.MeshBasicMaterial({ color: 0xff3b2a });
+  const C = {
+    rat:    { col: 0x8b8792, belly: 0xcfc6d2, bw: 0.9, bh: 0.7, bl: 1.6, leg: 0.32, lt: 0.09, head: 0.5, sc: 1.4 },
+    dog:    { col: 0x6b4428, belly: 0xc8a070, bw: 0.75, bh: 0.75, bl: 1.6, leg: 0.7, lt: 0.12, head: 0.5, sc: 1.35 },
+    bear:   { col: 0x5a3a22, belly: 0x8a6040, bw: 1.5, bh: 1.3, bl: 2.2, leg: 0.75, lt: 0.26, head: 0.75, sc: 1.45 },
+    lion:   { col: 0xc8973f, belly: 0xe8c890, bw: 1.0, bh: 0.95, bl: 2.0, leg: 0.85, lt: 0.17, head: 0.62, sc: 1.4 },
+    croc:   { col: 0x3f6a2a, belly: 0xb8c070, bw: 1.2, bh: 0.55, bl: 3.0, leg: 0.32, lt: 0.17, head: 0.55, sc: 1.45 },
+    dragon: { col: 0x3a7fc0, belly: 0xa8e8ff, bw: 1.3, bh: 1.1, bl: 2.6, leg: 0.95, lt: 0.22, head: 0.7, sc: 1.65 },
+  }[BOSSES[t].id];
+  const fur = M(C.col), belly = M(C.belly), y0 = C.leg + C.bh * 0.45;
+  ball(0.5, fur, 0, y0, 0, C.bw, C.bh, C.bl);
+  ball(0.5, belly, 0, y0 - C.bh * 0.18, -0.05, C.bw * 0.82, C.bh * 0.7, C.bl * 0.9);
+  // legs swing from the hip
+  for (const [x, z] of [[-1, -1], [1, -1], [-1, 1], [1, 1]]) {
+    const hip = new THREE.Group(); hip.position.set(x * C.bw * 0.32, C.leg + 0.05, z * C.bl * 0.3); body.add(hip);
+    mesh(new THREE.CylinderGeometry(C.lt, C.lt * 0.85, C.leg + 0.1, 8), fur, 0, -C.leg / 2, 0, hip);
+    ball(C.lt * 1.25, M(0x2a2018), 0, -C.leg + 0.02, -C.lt * 0.4, 1, 0.6, 1.3, hip);
+    legs.push(hip);
+  }
+  // the head turns and lunges; the jaw opens for a bite
+  const head = new THREE.Group(); head.position.set(0, y0 + C.bh * 0.2, -C.bl * 0.5); body.add(head);
+  const hs = C.head;
+  ball(hs * 0.6, fur, 0, 0, -hs * 0.2, 1, 0.9, 1.05, head);
+  const jaw = new THREE.Group(); jaw.position.set(0, -hs * 0.25, -hs * 0.4); head.add(jaw);
+  const teeth = M(0xfffbea);
+  // eyes and angry brows
+  for (const sx of [-1, 1]) {
+    ball(hs * 0.14, eyeW, sx * hs * 0.26, hs * 0.18, -hs * 0.68, 1, 1, 0.6, head);
+    ball(hs * 0.08, t === 6 ? eyeR : eyeB, sx * hs * 0.26, hs * 0.18, -hs * 0.77, 1, 1, 0.5, head);
+    const brow = box(hs * 0.3, hs * 0.07, hs * 0.08, M(0x1a1410), sx * hs * 0.24, hs * 0.34, -hs * 0.72, head); brow.rotation.z = sx * 0.45;
+  }
+  const id = BOSSES[t].id;
+  if (id === 'rat') {
+    cone(hs * 0.38, hs * 0.9, fur, 0, -hs * 0.05, -hs * 0.95, -Math.PI / 2, 0, head);
+    ball(hs * 0.11, M(0xf08aa0), 0, -hs * 0.05, -hs * 1.4, 1, 1, 1, head);
+    for (const sx of [-1, 1]) { const e = ball(hs * 0.32, M(0xe9a4b4), sx * hs * 0.42, hs * 0.48, -hs * 0.1, 1, 1, 0.3, head); e.rotation.z = sx * 0.3; }
+    box(hs * 0.1, hs * 0.18, hs * 0.05, teeth, -0.04, -0.06, -hs * 0.55, jaw); box(hs * 0.1, hs * 0.18, hs * 0.05, teeth, 0.04, -0.06, -hs * 0.55, jaw);
+    const tail = mesh(new THREE.CylinderGeometry(0.03, 0.08, 2.4, 6), M(0xe9a4b4), 0, y0 - 0.1, C.bl * 0.5 + 1.1); tail.rotation.x = Math.PI / 2 - 0.25;
+  } else if (id === 'dog') {
+    box(hs * 0.5, hs * 0.38, hs * 0.7, fur, 0, -hs * 0.08, -hs * 0.85, head);
+    ball(hs * 0.12, eyeB, 0, hs * 0.08, -hs * 1.22, 1, 1, 1, head);
+    box(hs * 0.46, hs * 0.12, hs * 0.6, M(0x8a0f0f), 0, -0.02, -hs * 0.35, jaw);
+    for (const sx of [-1, 1]) { const e = box(hs * 0.2, hs * 0.5, hs * 0.08, M(0x3a2414), sx * hs * 0.48, hs * 0.05, -hs * 0.05, head); e.rotation.z = sx * 0.35; }
+    const collar = mesh(new THREE.TorusGeometry(0.42, 0.07, 6, 16), M(0xc0261c), 0, y0 + 0.2, -C.bl * 0.4); collar.rotation.x = Math.PI / 2 - 0.4;
+    for (let k = 0; k < 8; k++) { const a = k / 8 * Math.PI * 2; cone(0.05, 0.16, M(0xd8d8e0), Math.cos(a) * 0.5, y0 + 0.2 + Math.sin(a) * 0.2, -C.bl * 0.4 + Math.sin(a) * 0.35, 0, -a + Math.PI / 2); }
+    const tail = mesh(new THREE.CylinderGeometry(0.05, 0.09, 0.7, 6), fur, 0, y0 + 0.35, C.bl * 0.5 + 0.1); tail.rotation.x = -0.7;
+  } else if (id === 'bear') {
+    box(hs * 0.55, hs * 0.42, hs * 0.5, belly, 0, -hs * 0.12, -hs * 0.72, head);
+    ball(hs * 0.13, eyeB, 0, hs * 0.02, -hs * 0.98, 1, 1, 1, head);
+    box(hs * 0.5, hs * 0.12, hs * 0.45, M(0x6a1010), 0, -0.02, -hs * 0.25, jaw);
+    for (const sx of [-1, 1]) ball(hs * 0.18, fur, sx * hs * 0.42, hs * 0.48, -hs * 0.1, 1, 1, 0.6, head);
+    for (const sx of [-1, 1]) for (let k = -1; k <= 1; k++) cone(0.04, 0.16, teeth, sx * C.bw * 0.32 + k * 0.07, 0.03, -C.bl * 0.3 - C.lt * 1.2, -Math.PI / 2 - 0.4);
+  } else if (id === 'lion') {
+    box(hs * 0.48, hs * 0.38, hs * 0.5, belly, 0, -hs * 0.12, -hs * 0.72, head);
+    ball(hs * 0.12, M(0x3a2010), 0, 0, -hs * 0.98, 1, 1, 1, head);
+    box(hs * 0.44, hs * 0.1, hs * 0.45, M(0x6a1010), 0, -0.02, -hs * 0.25, jaw);
+    // a mane of thorns
+    const mane = M(0x6a2a4a), thorn = M(0x3a1028);
+    ball(hs * 0.95, mane, 0, 0, hs * 0.05, 1.1, 1.1, 0.7, head);
+    for (let k = 0; k < 14; k++) { const a = k / 14 * Math.PI * 2; cone(0.07, 0.42, thorn, Math.cos(a) * hs * 0.95, Math.sin(a) * hs * 0.95, hs * 0.05, 0, a - Math.PI / 2, head); }
+    const tail = mesh(new THREE.CylinderGeometry(0.04, 0.07, 1.4, 6), fur, 0, y0 + 0.1, C.bl * 0.5 + 0.55); tail.rotation.x = -1.0;
+    ball(0.16, mane, 0, y0 + 0.62, C.bl * 0.5 + 0.95);
+  } else if (id === 'croc') {
+    box(hs * 0.9, hs * 0.35, hs * 2.4, fur, 0, -hs * 0.15, -hs * 1.3, head);
+    box(hs * 0.85, hs * 0.18, hs * 2.2, belly, 0, -0.04, -hs * 0.9, jaw);
+    for (let k = 0; k < 7; k++) for (const sx of [-1, 1]) cone(0.04, 0.13, teeth, sx * hs * 0.38, -hs * 0.33, -hs * (0.5 + k * 0.3), Math.PI, 0, head);
+    for (let k = 0; k < 6; k++) cone(0.1, 0.22, M(0x2a4a1c), 0, y0 + C.bh * 0.45, -C.bl * 0.35 + k * C.bl * 0.14);
+    const tail = mesh(new THREE.ConeGeometry(0.42, 3.0, 8), fur, 0, y0 - 0.05, C.bl * 0.5 + 1.3); tail.rotation.x = Math.PI / 2; tail.scale.set(1, 1, 0.55);
+    for (const l of legs) l.rotation.z = l.position.x > 0 ? 0.6 : -0.6;
+  } else if (id === 'dragon') {
+    const crystal = M(0x9ff4ff, { emissive: 0x2ad4ff, emissiveIntensity: 0.6 });
+    box(hs * 0.5, hs * 0.4, hs * 0.75, fur, 0, -hs * 0.1, -hs * 0.85, head);
+    box(hs * 0.46, hs * 0.12, hs * 0.65, M(0x1a3a6a), 0, -0.02, -hs * 0.35, jaw);
+    for (const sx of [-1, 1]) cone(0.1, 0.7, crystal, sx * hs * 0.32, hs * 0.55, hs * 0.1, -0.6, sx * -0.3, head);
+    for (let k = 0; k < 7; k++) cone(0.14, 0.5, crystal, 0, y0 + C.bh * 0.5 + 0.05, -C.bl * 0.38 + k * C.bl * 0.13);
+    const tail = mesh(new THREE.ConeGeometry(0.4, 3.0, 8), fur, 0, y0, C.bl * 0.5 + 1.2); tail.rotation.x = Math.PI / 2 + 0.15;
+    cone(0.2, 0.6, crystal, 0, y0 - 0.2, C.bl * 0.5 + 2.75, Math.PI / 2);
+    // wings flap from the shoulders
+    const wingShape = new THREE.Shape(); wingShape.moveTo(0, 0); wingShape.lineTo(2.6, 0.9); wingShape.lineTo(2.2, -0.2); wingShape.lineTo(1.6, -0.6); wingShape.lineTo(0.9, -0.5); wingShape.lineTo(0, -0.7);
+    const wingGeo = new THREE.ShapeGeometry(wingShape), wingMat = M(0x5fb8ff, { side: THREE.DoubleSide, emissive: 0x0a3a6a, emissiveIntensity: 0.3 });
+    root.userData.wings = [-1, 1].map(sx => { const w = new THREE.Group(); w.position.set(sx * C.bw * 0.3, y0 + C.bh * 0.35, -C.bl * 0.15); body.add(w); const m = new THREE.Mesh(wingGeo, wingMat); m.rotation.x = Math.PI / 2; m.scale.x = sx; w.add(m); return w; });
+  }
+  root.scale.setScalar(C.sc);
+  Object.assign(root.userData, { body, head, jaw, legs, mats, y0 });
+  return castsShadow(addOutlines(root, 0.035));
+}
+// ---- warning shapes on the ground while an attack winds up, so you can see where to get out of
+const telMat = new THREE.MeshBasicMaterial({ color: 0xff2a1a, transparent: true, opacity: 0.3, depthWrite: false, side: THREE.DoubleSide });
+const sectorGeo = half => { const g = new THREE.CircleGeometry(1, 32, Math.PI / 2 - half, half * 2); g.rotateX(-Math.PI / 2); return g; };
+const TEL = {
+  bite: new THREE.Mesh(sectorGeo(1.25), telMat), breath: new THREE.Mesh(sectorGeo(BREATH_HALF), telMat),
+  slam: new THREE.Mesh((() => { const g = new THREE.CircleGeometry(1, 40); g.rotateX(-Math.PI / 2); return g; })(), telMat),
+  charge: new THREE.Mesh((() => { const g = new THREE.PlaneGeometry(1, 1); g.rotateX(-Math.PI / 2); g.translate(0, 0, -0.5); return g; })(), telMat),
+};
+for (const m of Object.values(TEL)) { m.visible = false; m.renderOrder = 2; scene.add(m); }
+const breathFx = (() => { const g = new THREE.ConeGeometry(BREATH_R * Math.tan(BREATH_HALF), BREATH_R, 20, 1, true); g.translate(0, -BREATH_R / 2, 0); g.rotateX(Math.PI / 2);
+  const m = new THREE.Mesh(g, new THREE.MeshBasicMaterial({ color: 0x9ff4ff, transparent: true, opacity: 0.45, depthWrite: false, blending: THREE.AdditiveBlending, side: THREE.DoubleSide })); m.visible = false; scene.add(m); return m; })();
+const slamFx = (() => { const m = new THREE.Mesh(new THREE.RingGeometry(0.85, 1, 48), new THREE.MeshBasicMaterial({ color: 0xffe0a0, transparent: true, opacity: 0, depthWrite: false, side: THREE.DoubleSide })); m.rotation.x = -Math.PI / 2; m.position.y = 0.08; scene.add(m); m.userData.t = 9; return m; })();
+
+const roarSound = () => { noiseBurst(320, 'lowpass', 0.9, 0.7); blip(95, 0.8, 'sawtooth', 0.22); blip(72, 1.0, 'sawtooth', 0.18, 0.15); };
+const hurtSound = () => { blip(240, 0.14, 'sawtooth', 0.2); noiseBurst(700, 'lowpass', 0.18, 0.4); };
+const slamSound = () => { noiseBurst(160, 'lowpass', 0.5, 0.8); blip(55, 0.4, 'sine', 0.35); };
+
+function bossClear() {
+  if (BOSS.mesh) scene.remove(BOSS.mesh);
+  if (BOSS.i) BOSS.gone = BOSS.i; // a late update about this boss mustn't bring it back
+  BOSS.mesh = null; BOSS.st = 'none'; BOSS.atk = null; BOSS.i = '';
+  for (const m of Object.values(TEL)) m.visible = false;
+  breathFx.visible = false;
+}
+// everyone who can be chased: you, and players in the lobby who are playing
+function bossPlayers() {
+  const out = [{ id: NET.on ? NET.selfId : 'me', x: P.x, z: P.z, ko: PL.ko }];
+  if (NET.on) for (const p of NET.peers) { const pr = p.pres; if (pr && pr.ph !== 'room' && isFinite(pr.x) && isFinite(pr.z)) out.push({ id: p.id, x: pr.x, z: pr.z, ko: !!pr.ko }); }
+  return out;
+}
+function bossSpot(t, near) {
+  // somewhere in the zone about 24 m from whoever set it off, or anywhere along the zone's ring
+  const inZone = (x, z) => Math.hypot(x, z) < R_MAP - 6 && zoneTierAt(x, z) === t;
+  if (near) for (let k = 0; k < 24; k++) { const a = Math.random() * TAU, x = near.x + Math.cos(a) * 24, z = near.z + Math.sin(a) * 24; if (inZone(x, z)) return pushOut(x, z, BOSSES[t].r); }
+  const r0 = ZONE_EDGES[t], r1 = ZONE_EDGES[t + 1] ?? R_MAP;
+  for (let k = 0; k < 80; k++) { const a = Math.random() * TAU, r = r0 + (r1 - r0) * (0.3 + Math.random() * 0.4), x = Math.cos(a) * r, z = Math.sin(a) * r; if (inZone(x, z)) return pushOut(x, z, BOSSES[t].r); }
+  return pushOut(Math.cos(t) * (r0 + 10), Math.sin(t) * (r0 + 10), BOSSES[t].r);
+}
+function spawnBoss(t) {
+  const ps = bossPlayers().filter(p => !p.ko), near = ps.find(p => zoneTierAt(p.x, p.z) === t);
+  const [x, z] = bossSpot(t, near), B = BOSSES[t];
+  const max = B.hp * (1 + 0.7 * Math.max(0, ps.length - 1)); // tougher with more players to fight it
+  Object.assign(BOSS, { i: Math.random().toString(36).slice(2, 8), t, x, z, dx: x, dz: z, hx: x, hz: z, wx: x, wz: z, yaw: Math.random() * TAU, hp: max, max, st: 'roam', stT: 0, atk: null, cd: 3, idle: 0, wipeT: 0, as: 0, sk: 0, mySk: 0, chargeHit: -1 });
+  bossAnnounce();
+}
+function bossAnnounce() {
+  const B = BOSSES[BOSS.t];
+  roarSound();
+  toast(`A ${B.name} has appeared in the ${TIERS[BOSS.t].zone}! Beat it to finish mowing there`, 'stop', 5);
+  guide = { x: BOSS.x, z: BOSS.z, label: B.name, until: timeU.value + 12 };
+}
+// ---- the host's boss brain
+function bossThink(dt) {
+  const B = BOSSES[BOSS.t];
+  BOSS.stT += dt; BOSS.cd -= dt;
+  if (BOSS.st === 'dead') { if (BOSS.stT > 4) { bossClear(); BOSS.cool = 3; } return; }
+  // the zone isn't at the boss line any more (regrown, reset or already beaten): it leaves
+  if (S.beaten[BOSS.t] || cutCount[BOSS.t] < lockAt(BOSS.t)) { bossClear(); return; }
+  const ps = bossPlayers(), alive = ps.filter(p => !p.ko);
+  // in a lobby, the fight is lost only when everyone is knocked out
+  if (NET.on && !alive.length) {
+    BOSS.wipeT += dt;
+    if (BOSS.wipeT > 1.2) { const w = S.wipes[BOSS.t] + 1; netSend('boss', { e: 'wipe', t: BOSS.t, w }); applyBossWipe(BOSS.t, w); }
+    return;
+  }
+  BOSS.wipeT = 0;
+  let tgt = null, td = 45;
+  for (const p of alive) { const d = Math.hypot(p.x - BOSS.x, p.z - BOSS.z); if (d < td) { td = d; tgt = p; } }
+  const face = (x, z, rate) => { const want = Math.atan2(-(x - BOSS.x), -(z - BOSS.z)), dy = ((want - BOSS.yaw + Math.PI * 3) % TAU) - Math.PI; BOSS.yaw += Math.max(-rate * dt, Math.min(rate * dt, dy)); return Math.abs(dy); };
+  const move = spd => { const p = pushOut(BOSS.x - Math.sin(BOSS.yaw) * spd * dt, BOSS.z - Math.cos(BOSS.yaw) * spd * dt, B.r); BOSS.x = p[0]; BOSS.z = p[1]; };
+  const go = st => { BOSS.st = st; BOSS.stT = 0; };
+  const attack = type => { BOSS.as++; BOSS.atk = { type, x: BOSS.x, z: BOSS.z, yaw: BOSS.yaw }; if (type !== 'bite') BOSS.cd = 5 + Math.random() * 3; go('windup'); };
+  switch (BOSS.st) {
+    case 'roam':
+      if (tgt) { go('chase'); break; }
+      // nobody around: wander near where it appeared, and heal up after a while
+      BOSS.idle += dt; if (BOSS.idle > 15) BOSS.hp = BOSS.max;
+      if (Math.hypot(BOSS.wx - BOSS.x, BOSS.wz - BOSS.z) < 1.5 || BOSS.stT > 8) { const a = Math.random() * TAU; BOSS.wx = BOSS.hx + Math.cos(a) * 8; BOSS.wz = BOSS.hz + Math.sin(a) * 8; BOSS.stT = 0; }
+      face(BOSS.wx, BOSS.wz, 2); move(B.speed * 0.35);
+      break;
+    case 'chase': {
+      if (!tgt) { go('roam'); break; }
+      BOSS.idle = 0;
+      const dy = face(tgt.x, tgt.z, 4.5), reach = B.reach + B.r;
+      const special = B.special && BOSS.cd <= 0 && (B.special === 'charge' ? td > 4 && td < CHARGE_LEN : B.special === 'slam' ? td < SLAM_R(BOSS.t) - 0.4 : td < BREATH_R - 1);
+      if (td < reach + 0.2 && dy < 0.6) attack('bite');
+      else if (special && dy < 0.5) attack(B.special);
+      else if (td > reach) move(B.speed * (dy > 1.2 ? 0.4 : 1));
+      break;
+    }
+    case 'windup': {
+      const A = BOSS.atk;
+      // it tracks you for the first half of the wind-up, then commits: that's your moment to dodge
+      if (BOSS.stT < WIND[A.type] * 0.5 && tgt) face(tgt.x, tgt.z, 5);
+      if (BOSS.stT < WIND[A.type] * 0.5) Object.assign(A, { x: BOSS.x, z: BOSS.z, yaw: BOSS.yaw });
+      if (BOSS.stT >= WIND[A.type]) { if (A.type === 'bite' || A.type === 'slam') { BOSS.sk++; go('recover'); } else go(A.type); }
+      break;
+    }
+    case 'charge': move(CHARGE_LEN); if (BOSS.stT > 1) go('recover'); break;
+    case 'breath': if (BOSS.stT > 1.6) go('recover'); break;
+    case 'recover': if (BOSS.stT > (BOSS.atk?.type === 'bite' ? 0.45 : 0.9)) go('chase'); break;
+  }
+}
+// what the host shares in its presence
+function bossPres() {
+  if (BOSS.st === 'none') return null;
+  const A = BOSS.atk;
+  return { i: BOSS.i, t: BOSS.t, x: +BOSS.x.toFixed(2), z: +BOSS.z.toFixed(2), y: +BOSS.yaw.toFixed(2), h: Math.ceil(BOSS.hp), m: Math.round(BOSS.max), s: BOSS.st,
+    a: A ? [A.type, BOSS.as, BOSS.sk, +A.x.toFixed(2), +A.z.toFixed(2), +A.yaw.toFixed(2)] : null };
+}
+// everyone else follows the host's boss
+function bossFromHost() {
+  const bo = NET.peers.find(p => p.id === NET.hostId)?.pres?.bo;
+  if (!bo || !BOSSES[bo.t] || !isFinite(bo.x) || !isFinite(bo.z) || bo.i === BOSS.gone) { if (BOSS.st !== 'none' && bo?.i !== BOSS.i) bossClear(); return; }
+  const fresh = bo.i !== BOSS.i;
+  if (fresh) { if (BOSS.mesh) scene.remove(BOSS.mesh); BOSS.mesh = null; Object.assign(BOSS, { i: bo.i, t: bo.t, dx: bo.x, dz: bo.z, dyaw: +bo.y || 0 }); }
+  Object.assign(BOSS, { t: bo.t, x: bo.x, z: bo.z, yaw: +bo.y || 0, hp: Math.max(0, +bo.h || 0), max: Math.max(1, +bo.m || 1) });
+  if (bo.s !== BOSS.st) { BOSS.st = BOSS_LIVE.has(bo.s) || bo.s === 'dead' ? bo.s : 'roam'; BOSS.stT = 0; }
+  if (Array.isArray(bo.a) && WIND[bo.a[0]]) { const [type, as, sk, ax, az, ay] = bo.a; BOSS.atk = { type, x: +ax, z: +az, yaw: +ay }; BOSS.as = as; BOSS.sk = sk; }
+  if (fresh) { BOSS.mySk = BOSS.sk; BOSS.chargeHit = BOSS.as; if (BOSS.st !== 'dead') bossAnnounce(); }
+}
+function bossDamage(d) {
+  if (!bossAlive() || !(d > 0)) return;
+  BOSS.hp -= d;
+  if (BOSS.hp <= 0) { BOSS.hp = 0; const t = BOSS.t; if (NET.on) netSend('boss', { e: 'win', t }); applyBossWin(t); }
+}
+// your tool is your weapon: whatever is in your cutting box hurts the boss
+function bossPlayerHit(cx, cz, hw, hd, T, cutting, dt) {
+  if (!cutting || PL.ko || !bossAlive()) return;
+  const B = BOSSES[BOSS.t];
+  if (Math.hypot(cx - BOSS.dx, cz - BOSS.dz) > B.r * 1.15 + Math.max(hw, hd) + 0.5) return;
+  const dmg = T.power * powerMult() * dt * (T.tier < BOSS.t ? 0.5 : 1);
+  BOSS.flash = 0.12;
+  BOSS.hitSnd -= dt; if (BOSS.hitSnd <= 0) { BOSS.hitSnd = 0.22; noiseBurst(900, 'bandpass', 0.08, 0.35); blip(180, 0.06, 'square', 0.08); spawnParts(BOSS.dx, BOSS.dz, BOSS.t, 2); }
+  if (!NET.on || NET.isHost) bossDamage(dmg);
+  else BOSS.hitAcc += dmg;
+}
+function hurt(d, steady) {
+  if (PL.ko || !(d > 0)) return;
+  PL.hp -= d; PL.hurtAt = performance.now();
+  PL.flash = Math.min(1, PL.flash + (steady ? d / 20 : 0.9));
+  if (!steady || Math.random() < 0.1) hurtSound();
+  if (PL.hp > 0) return;
+  PL.hp = 0;
+  if (!NET.on) { applyBossWipe(BOSS.t); return; } // solo: the zone grows back
+  PL.ko = true; mouseDown = false; cutToggle = false;
+  toast(`You're knocked out · you'll get back up when your team beats the ${BOSSES[BOSS.t].name}`, 'stop', 4);
+}
+// did the boss's attack get me? Everyone checks for themselves.
+function bossResolve(dt) {
+  if (PL.ko || state !== 'play' || !BOSS.atk) return;
+  const B = BOSSES[BOSS.t], A = BOSS.atk, dx = P.x - A.x, dz = P.z - A.z, d = Math.hypot(dx, dz);
+  const inFront = half => { const a = Math.atan2(-dx, -dz), off = ((a - A.yaw + Math.PI * 3) % TAU) - Math.PI; return Math.abs(off) < half; };
+  if (BOSS.sk !== BOSS.mySk) {
+    BOSS.mySk = BOSS.sk;
+    if (A.type === 'bite' && d < B.reach + B.r + 0.4 && (inFront(1.25) || d < B.r + 0.4)) hurt(B.dmg);
+    if (A.type === 'slam') { if (d < SLAM_R(BOSS.t)) hurt(B.dmg * 1.5); if (d < 40) { slamSound(); slamFx.position.x = A.x; slamFx.position.z = A.z; slamFx.userData.t = 0; } }
+  }
+  if (BOSS.st === 'charge' && BOSS.chargeHit !== BOSS.as && Math.hypot(P.x - BOSS.dx, P.z - BOSS.dz) < B.r * 1.15 + 1) { BOSS.chargeHit = BOSS.as; hurt(B.dmg * 1.6); }
+  if (BOSS.st === 'breath' && d < BREATH_R && inFront(BREATH_HALF)) hurt(B.dmg * 1.4 * dt, true);
+}
+function applyBossWin(t) {
+  if (S.beaten[t]) return;
+  S.beaten[t] = true;
+  if (BOSS.t === t && BOSS.st !== 'none') { BOSS.st = 'dead'; BOSS.stT = 0; BOSS.hp = 0; }
+  unlock('boss' + t);
+  const v = Math.round(TIERS[t].worth * 0.1);
+  // own wallets: everyone collects the bounty; co-op: the host pays it into the shared wallet once
+  if (!NET.coop) earn(v); else if (NET.isHost) { S.money += v; S.stats.earned += v; }
+  PL.ko = false; PL.hp = PL.max;
+  floaty('+' + fmt(v)); fanfare();
+  toast(`The ${BOSSES[t].name} is beaten! ${fmt(v)} bounty · +5% cutting power · the ${TIERS[t].zone} can be mowed again`, 'good', 5.5);
+  save();
+}
+function regrowZone(t) {
+  for (let i = 0; i < NC; i++) if (gTier[i] === t && !gUncut[i]) { gUncut[i] = 1; gHp[i] = TIERS[t].hp; }
+  cutCount[t] = 0;
+  recountChunks(); resetGrass(); groundFull(); mmFull();
+}
+function applyBossWipe(t, w) {
+  S.wipes[t] = w ?? S.wipes[t] + 1;
+  regrowZone(t);
+  bossClear(); BOSS.cool = 5;
+  PL.ko = false; PL.hp = PL.max; PL.flash = 0;
+  const p = pushOut(SHED.x + 2.5, SHED.z + 2.5, 0.5); P.x = p[0]; P.z = p[1]; P.vx = P.vz = 0;
+  denySound();
+  toast(`The ${BOSSES[t].name} won · the ${TIERS[t].zone} grew back. It returns when the zone is 75% mowed again`, 'stop', 6);
+  save();
+}
+// knocked out in a lobby: watch the fight from above
+function spectateCam() {
+  const a = timeU.value * 0.25, cx = bossAlive() ? BOSS.dx : P.x, cz = bossAlive() ? BOSS.dz : P.z;
+  camera.position.set(cx + Math.cos(a) * 14, 11, cz + Math.sin(a) * 14);
+  camera.lookAt(cx, 1, cz);
+}
+function updateBoss(dt) {
+  const host = !NET.on || NET.isHost;
+  // solo pauses with the game; a lobby keeps going
+  const running = NET.on ? NET.phase === 'play' : state === 'play';
+  if (host && running) {
+    if (BOSS.st === 'none') { BOSS.cool -= dt; if (BOSS.cool <= 0) { BOSS.cool = 1; for (let t = 1; t <= 6; t++) if (zoneLocked(t)) { spawnBoss(t); break; } } }
+    else bossThink(dt);
+  } else if (!host) {
+    bossFromHost();
+    BOSS.stT += dt;
+    // send my hits a few times a second
+    BOSS.hitT -= dt;
+    if (BOSS.hitAcc > 0 && BOSS.hitT <= 0) { netSend('hit', { d: +BOSS.hitAcc.toFixed(2), i: BOSS.i }); BOSS.hitAcc = 0; BOSS.hitT = 0.2; }
+  }
+  if (running && bossAlive()) bossResolve(dt);
+  // the boss left without a result (the host quit, say): nobody stays knocked out
+  if (PL.ko && !bossAlive() && BOSS.st !== 'dead') { PL.ko = false; PL.hp = PL.max; }
+  // health: back up after a few seconds without getting hit
+  if (!PL.ko && PL.hp < PL.max && performance.now() - PL.hurtAt > 4000) PL.hp = Math.min(PL.max, PL.hp + 10 * dt);
+  PL.flash = Math.max(0, PL.flash - dt * 1.8);
+  setStyle('hurt', 'opacity', PL.flash.toFixed(2));
+  const engaged = bossEngaged();
+  $('hpWrap').hidden = !(engaged || PL.hp < PL.max) || PL.ko;
+  setStyle('hpFill', 'width', (PL.hp / PL.max * 100).toFixed(1) + '%');
+  $('bossBar').hidden = !engaged;
+  if (document.body.classList.contains('bossOn') !== engaged) document.body.classList.toggle('bossOn', engaged);
+  if (engaged) { setText('bossName', BOSSES[BOSS.t].name.toUpperCase()); setStyle('bossFill', 'width', (BOSS.hp / BOSS.max * 100).toFixed(1) + '%'); }
+  $('koNote').hidden = !PL.ko;
+  if (PL.ko) setText('koNote', `Knocked out · you'll get back up when your team beats the ${BOSSES[BOSS.t]?.name || 'boss'}`);
+  // slam shockwave
+  slamFx.userData.t += dt; { const k = slamFx.userData.t / 0.5; slamFx.material.opacity = k < 1 ? 0.8 * (1 - k) : 0; slamFx.scale.setScalar(0.5 + k * (BOSS.t ? SLAM_R(BOSS.t) : 4)); }
+  drawBoss(dt);
+}
+function drawBoss(dt) {
+  for (const m of Object.values(TEL)) m.visible = false;
+  breathFx.visible = false;
+  if (BOSS.st === 'none') return;
+  const B = BOSSES[BOSS.t];
+  if (!BOSS.mesh) { BOSS.mesh = beastModel(BOSS.t); scene.add(BOSS.mesh); BOSS.dx = BOSS.x; BOSS.dz = BOSS.z; BOSS.dyaw = BOSS.yaw; }
+  const f = 1 - Math.exp(-dt * 12), px = BOSS.dx, pz = BOSS.dz;
+  if (Math.hypot(BOSS.x - BOSS.dx, BOSS.z - BOSS.dz) > 10) { BOSS.dx = BOSS.x; BOSS.dz = BOSS.z; } else { BOSS.dx += (BOSS.x - BOSS.dx) * f; BOSS.dz += (BOSS.z - BOSS.dz) * f; }
+  BOSS.dyaw += (((BOSS.yaw - BOSS.dyaw + Math.PI * 3) % TAU) - Math.PI) * f;
+  const g = BOSS.mesh, u = g.userData, spd = Math.hypot(BOSS.dx - px, BOSS.dz - pz) / Math.max(dt, 1e-3);
+  g.position.set(BOSS.dx, BOSS.t === 6 ? 0.25 + Math.sin(timeU.value * 2) * 0.12 : 0, BOSS.dz); g.rotation.set(0, BOSS.dyaw, 0);
+  BOSS.meshT += dt * Math.min(12, spd * 1.6);
+  u.legs.forEach((l, k) => l.rotation.x = Math.sin(BOSS.meshT + (k === 0 || k === 3 ? 0 : Math.PI)) * Math.min(0.7, spd * 0.12));
+  if (u.wings) u.wings.forEach((w, k) => w.rotation.z = (k ? -1 : 1) * (0.35 + Math.sin(timeU.value * (BOSS.st === 'breath' ? 9 : 4)) * 0.45));
+  const A = BOSS.atk, wind = A ? WIND[A.type] : 1, p = Math.min(1, BOSS.stT / wind);
+  u.body.position.y = 0; u.body.rotation.x = 0; u.head.rotation.x = 0; u.jaw.rotation.x = 0;
+  const headZ = u.head.userData.z ??= u.head.position.z;
+  u.head.position.z = headZ;
+  if (BOSS.st === 'windup' && A) {
+    // telegraph: crouch, rear up or pull back, and paint the danger zone on the ground
+    if (A.type === 'bite') { u.head.position.z = headZ + 0.25 * p; u.jaw.rotation.x = 0.5 * p; }
+    if (A.type === 'slam') { u.body.rotation.x = -0.45 * p; u.body.position.y = 0.3 * p; }
+    if (A.type === 'charge') { u.body.position.y = -0.15 * p; u.head.rotation.x = 0.35 * p; }
+    if (A.type === 'breath') { u.head.rotation.x = -0.4 * p; u.jaw.rotation.x = 0.3 * p; }
+    const tel = TEL[A.type]; tel.visible = true; tel.position.set(A.x, 0.07, A.z); tel.rotation.y = A.yaw;
+    telMat.opacity = 0.18 + 0.22 * p + Math.sin(timeU.value * 30) * 0.05;
+    if (A.type === 'bite') tel.scale.setScalar(B.reach + B.r + 0.4);
+    if (A.type === 'slam') tel.scale.setScalar(SLAM_R(BOSS.t));
+    if (A.type === 'charge') tel.scale.set(B.r * 2.3 + 0.6, 1, CHARGE_LEN);
+    if (A.type === 'breath') tel.scale.setScalar(BREATH_R);
+  } else if (BOSS.st === 'recover' && A?.type === 'bite' && BOSS.stT < 0.2) { u.head.position.z = headZ - 0.5; u.jaw.rotation.x = 0.1; }
+  else if (BOSS.st === 'recover' && A?.type === 'slam' && BOSS.stT < 0.25) { u.body.rotation.x = 0.15; }
+  else if (BOSS.st === 'breath' && A) {
+    u.jaw.rotation.x = 0.45; u.head.rotation.x = 0.1;
+    breathFx.visible = true; breathFx.position.set(A.x - Math.sin(A.yaw) * B.r * 1.2, 1.4, A.z - Math.cos(A.yaw) * B.r * 1.2); breathFx.rotation.y = A.yaw;
+    breathFx.material.opacity = 0.35 + Math.sin(timeU.value * 40) * 0.1;
+    const tel = TEL.breath; tel.visible = true; tel.position.set(A.x, 0.07, A.z); tel.rotation.y = A.yaw; tel.scale.setScalar(BREATH_R); telMat.opacity = 0.35;
+  } else if (BOSS.st === 'dead') {
+    g.rotation.z = Math.min(1, BOSS.stT * 2.5) * Math.PI / 2;
+    g.position.y = -Math.max(0, BOSS.stT - 2.2) * 0.8;
+  }
+  // flash white when hit
+  BOSS.flash = Math.max(0, BOSS.flash - dt);
+  const fl = BOSS.flash > 0 ? 0.7 : 0;
+  if (u.flashed !== fl) { u.flashed = fl; for (const m of u.mats) { if (!m.userData.e0) m.userData.e0 = m.emissive.clone(); m.emissive.copy(m.userData.e0).lerp(_c1.setRGB(1, 1, 1), fl); } }
+}
+
 // in a co-op lobby bags on the ground are shared, so drops and pick-ups are broadcast
 function addSack(s, remote = false) {
   s.id = s.id || Math.random().toString(36).slice(2, 10);
@@ -1710,6 +2129,7 @@ function cutAt(cx, cz, fx, fz, hw, hd, maxTier, power, dt, who) {
     const dx = cellX(gx) - cx, dz = cellX(gz) - cz;
     if (Math.abs(dx * fx + dz * fz) > hd || Math.abs(dx * -fz + dz * fx) > hw) continue;
     const t = gTier[i];
+    if (!S.beaten[t] && cutCount[t] >= lockAt(t)) { res.locked = t; continue; } // the zone's boss guards the rest
     if (t > maxTier) { res.tough = Math.max(res.tough, t); continue; }
     res.any = true;
     if (who === 'player' && S.bag >= bagCap()) { res.full = true; continue; }
@@ -1772,7 +2192,7 @@ function removeRobot(r) {
   for (const s of r.load) addSack({ x: r.x, z: r.z, n: s.n, v: s.v });
   robots.splice(robots.indexOf(r), 1);
 }
-const robotCan = (r, i) => gUncut[i] && gTier[i] <= r.model.tier && !claimed.has(i);
+const robotCan = (r, i) => gUncut[i] && gTier[i] <= r.model.tier && !claimed.has(i) && !zoneLocked(gTier[i]);
 function findTarget(r) {
   const gx0 = toCell(r.x), gz0 = toCell(r.z);
   for (let rad = 1; rad <= 60; rad++) {
@@ -2023,7 +2443,7 @@ const FADE_IN = new Float32Array(64).map((_, i) => Math.sin(i / 63 * Math.PI / 2
 const FADE_OUT = new Float32Array(64).map((_, i) => Math.cos(i / 63 * Math.PI / 2));
 function newPlayer(idx, at, fadeIn) {
   const tune = TUNES[idx], bus = AU.ctx.createGain(), sd = 60 / tune.bpm / 2;
-  bus.connect(AU.music);
+  bus.connect(MUSIC.calm || AU.music);
   if (fadeIn) bus.gain.setValueCurveAtTime(FADE_IN, at, MUSIC.fade); else bus.gain.setValueAtTime(1, at);
   // play whole 4-bar loops adding up to about MUSIC.seconds
   return { idx, tune, bus, sd, step: 0, next: at, steps: 32 * Math.max(1, Math.round(MUSIC.seconds / (32 * sd))), endAt: Infinity };
@@ -2052,8 +2472,40 @@ function pumpMusic(horizon) {
     if (!rotated) break;
   }
 }
+// the boss fight tune: fast E minor with driving bass and drums
+const BOSS_TUNE = { name: 'Boss Fight', bpm: 150, swing: 0,
+  chords: [[40, 43, 47], [36, 40, 43], [38, 42, 45], [35, 39, 42]], // Em C D B
+  melody: [76, 0, 79, 76, 0, 83, 81, 79, 76, 0, 74, 0, 72, 0, 71, 0, 76, 0, 79, 0, 81, 0, 83, 0, 84, 0, 83, 81, 78, 0, 75, 0],
+  play(step, t, sd, bus) {
+    const k = step % 8, chord = this.chords[Math.floor(step / 8) % 4];
+    mTone(bus, midiHz(chord[0] - 12 + (k === 7 ? 7 : 0)), t, sd * 0.85, 'sawtooth', 0.16, 700);
+    if (k % 2 === 0) mKick(bus, t, 0.6);
+    if (k === 2 || k === 6) { mNoise(bus, t, 0.12, 'bandpass', 1600, 0.26); mNoise(bus, t + 0.01, 0.08, 'highpass', 4000, 0.1); }
+    mNoise(bus, t, 0.03, 'highpass', 8000, 0.06);
+    if (k === 0 || k === 3) for (const n of chord) mTone(bus, midiHz(n + 12), t, sd * 0.6, 'square', 0.03, 1800);
+    const note = this.melody[step % 32];
+    if (note) mTone(bus, midiHz(note), t, sd * 1.1, 'square', 0.06, 2800);
+  } };
+function pumpBattle(now) {
+  const want = bossEngaged(), b = MUSIC.battle;
+  if (want && !b) {
+    const bus = AU.ctx.createGain(), sd = 60 / BOSS_TUNE.bpm / 2;
+    bus.connect(AU.music); bus.gain.setValueAtTime(0.0001, now); bus.gain.setTargetAtTime(1, now, 0.35);
+    MUSIC.battle = { bus, sd, step: 0, next: now + 0.1, endAt: Infinity };
+    MUSIC.calm.gain.setTargetAtTime(0, now, 0.35);
+  } else if (b && !want && b.endAt === Infinity) {
+    b.endAt = now + 3; b.bus.gain.setTargetAtTime(0, now, 0.7); MUSIC.calm.gain.setTargetAtTime(1, now + 0.6, 0.8);
+  } else if (b && want && b.endAt !== Infinity) {
+    b.endAt = Infinity; b.bus.gain.setTargetAtTime(1, now, 0.35); MUSIC.calm.gain.setTargetAtTime(0, now, 0.35);
+  }
+  const p = MUSIC.battle; if (!p) return;
+  if (p.next < now) { const skip = Math.ceil((now + 0.05 - p.next) / p.sd); p.next += skip * p.sd; p.step += skip; }
+  while (p.next < now + 0.3 && p.next < p.endAt) { BOSS_TUNE.play(p.step, p.next, p.sd, p.bus); p.step++; p.next += p.sd; }
+  if (now > p.endAt) { MUSIC.battle = null; setTimeout(() => p.bus.disconnect(), 500); }
+}
 function startMusic() {
   if (MUSIC.timer) return;
+  MUSIC.calm = AU.ctx.createGain(); MUSIC.calm.connect(AU.music);
   MUSIC.players = [newPlayer(MUSIC.idx, AU.ctx.currentTime + 0.15, false)];
   // schedule a little ahead on a timer so the beat stays steady even when frames are slow
   MUSIC.timer = setInterval(() => {
@@ -2061,6 +2513,7 @@ function startMusic() {
     const now = AU.ctx.currentTime;
     for (const p of MUSIC.players) if (p.next < now) { const skip = Math.ceil((now + 0.05 - p.next) / p.sd); p.next += skip * p.sd; p.step += skip; } // after a stall, skip ahead
     pumpMusic(now + 0.3);
+    pumpBattle(now);
   }, 60);
 }
 function blip(freq, dur, type = 'triangle', vol = 0.25, when = 0) {
@@ -2163,7 +2616,7 @@ addEventListener('keydown', e => {
   keys.add(e.code);
   if (e.code === 'Tab') { e.preventDefault(); if (state === 'play' && !shopOpen) { if (document.pointerLockElement) document.exitPointerLock(); pause(); } else if (state === 'paused') startPlaying(); return; }
   if (e.code === 'KeyM' && !e.repeat) { toggleMute(); return; } // works in menus too
-  if (state !== 'play' || e.repeat) return;
+  if (state !== 'play' || e.repeat || PL.ko) return;
   if (e.code === 'KeyE') { if (shopOpen) closeShop(); else useAction(); }
   if (shopOpen) return;
   const hk = HOTKEYS.indexOf(e.code);
@@ -2613,7 +3066,7 @@ function findHunt() {
 // `?net=local` links tabs in one browser together (for testing).
 // The oldest player in the lobby is the host: in co-op it owns the shared wallet and runs the robots.
 const NET = { on: false, lobby: '', mode: 'coop', coop: false, isHost: true, selfId: '', hostId: '', since: 0, name: '', color: 0, tx: null,
-  phase: 'play', roomAt: 0, peers: [], known: new Set(), blocked: new Set(), lastSackFrom: new Map(), pool: 0, grace: 0, graceAt: 0, rate: new Map(), gotSnap: false, wantTimer: 0, snapSentAt: new Map(), outCuts: [], cutTimer: 0, presTimer: 0, econKey: '', econAt: 0, econBeat: 0, persistTimer: 8, persisting: false, snapIn: new Map(), reqSeq: 0, pending: new Map() };
+  phase: 'play', roomAt: 0, peers: [], known: new Set(), blocked: new Set(), lastSackFrom: new Map(), pool: 0, grace: 0, graceAt: 0, rate: new Map(), gotSnap: false, wantTimer: 0, snapSentAt: new Map(), outCuts: [], cutTimer: 0, presTimer: 0, econKey: '', econAt: 0, econBeat: 0, persistTimer: 8, persisting: false, snapIn: new Map(), reqSeq: 0, pending: new Map(), hitAt: new Map() };
 const PLAYER_COLORS = [0xe8742c, 0x3f8fe0, 0xd04a8a, 0x2fb07a, 0xf2c230, 0x9a6ae0, 0xe04a4a, 0x40c8d0];
 const lobbySlug = s => s.toLowerCase().trim().replace(/[^a-z0-9_.-]+/g, '-').replace(/^[^a-z0-9]+/, '').slice(0, 40) || 'lobby';
 const colorFor = id => { let h = 0; for (const ch of id) h = (h * 31 + ch.charCodeAt(0)) >>> 0; return h % PLAYER_COLORS.length; };
@@ -2810,6 +3263,7 @@ function netNote(act, id, who) {
 // ---- snapshots: what a newcomer needs, and what the lobby keeps between sessions ----
 async function buildSnap() {
   const o = { mode: NET.mode, dayT: S.dayT, cut: await packCut(), at: Date.now() };
+  o.bosses = { beaten: S.beaten, wipes: S.wipes };
   if (NET.coop) { o.econ = econObj(); o.sacks = S.sacks.map(s => ({ id: s.id, x: s.x, z: s.z, n: s.n, v: s.v })); }
   return o;
 }
@@ -2819,6 +3273,14 @@ async function applySnap(sn, fromHost) {
   if (typeof sn.dayT === 'number') S.dayT = sn.dayT % 1;
   if (NET.coop && sn.econ && (fromHost || NET.isHost)) applyEcon(sn.econ);
   if (NET.coop && Array.isArray(sn.sacks)) for (const s of sn.sacks) if (isFinite(s.x) && isFinite(s.z)) addSack({ id: String(s.id), x: s.x, z: s.z, n: +s.n || 0, v: +s.v || 0 }, true);
+  if (sn.bosses && typeof sn.bosses === 'object') {
+    // a zone that regrew after a lost boss fight stays regrown, even if an older copy of the map had it mowed
+    for (let t = 1; t <= 6; t++) {
+      const w = Array.isArray(sn.bosses.wipes) ? +sn.bosses.wipes[t] || 0 : 0;
+      if (w > S.wipes[t]) { S.wipes[t] = w; regrowZone(t); }
+      if (Array.isArray(sn.bosses.beaten) && sn.bosses.beaten[t]) S.beaten[t] = true;
+    }
+  }
   if (typeof sn.cut === 'string') {
     try {
       const extra = mergeCutBits(await unpackCut(sn.cut));
@@ -2928,7 +3390,7 @@ function updateAvatars(dt) {
     if (Math.hypot(dx, dz) > 8) { av.x = px; av.z = pz; } else { av.x += dx * f; av.z += dz * f; } // snap after teleports
     const moving = Math.hypot(+pr.vx || 0, +pr.vz || 0) > 0.3;
     let dy = (pr.y || 0) - av.yaw; dy = ((dy + Math.PI * 3) % (Math.PI * 2)) - Math.PI; av.yaw += dy * f;
-    av.root.position.set(av.x, 0, av.z); av.root.rotation.y = av.yaw;
+    av.root.position.set(av.x, 0, av.z); av.root.rotation.y = av.yaw; av.root.rotation.z = pr.ko ? 1.35 : 0; // knocked out: lying down
     av.bob = (av.bob || 0) + (moving ? dt * 9 : 0);
     av.body.legs.forEach((l, k) => l.rotation.x = moving ? Math.sin(av.bob + k * Math.PI) * 0.45 : 0);
     // robots this player is running
@@ -3040,6 +3502,19 @@ function wireNet(tx0) {
     if (from !== NET.hostId || !Number.isInteger(d?.n) || d.n < 0 || d.n > 36 || !d.bets || typeof d.bets !== 'object') return;
     rlStart(d.n, d.bets);
   });
+  // hits on the boss from other players: capped by what their tool could do in the time since their last hit
+  tx.on('hit', (d, from) => {
+    if (!NET.isHost || !bossAlive() || d?.i !== BOSS.i) return;
+    const pr = presOf(from); if (!pr || pr.ko || Math.hypot(pr.x - BOSS.x, pr.z - BOSS.z) > BOSSES[BOSS.t].r + 9) return;
+    const now = performance.now(), el = Math.min(1, Math.max(0.05, (now - (NET.hitAt.get(from) || now - 200)) / 1000)); NET.hitAt.set(from, now);
+    bossDamage(Math.max(0, Math.min(+d.d || 0, (toolDef(pr.t)?.power || 3) * 2.6 * el)));
+  });
+  // the host's word on how a boss fight ended
+  tx.on('boss', (d, from) => {
+    if (from !== NET.hostId || !BOSSES[d?.t]) return;
+    if (d.e === 'win') applyBossWin(d.t);
+    if (d.e === 'wipe' && +d.w > S.wipes[d.t]) applyBossWipe(d.t, +d.w);
+  });
   tx.on('note', (d, from) => { if (from === NET.hostId && typeof d?.msg === 'string') toast(d.msg.slice(0, 80), '', 2.4); });
   // the host can close the lobby for everyone, or remove one player
   tx.on('close', (d, from) => { if (from === NET.hostId) leaveLobby('The host closed the lobby.'); });
@@ -3058,6 +3533,9 @@ function sendPresence() {
   if (robots.length) pres.r = robots.slice(0, 40).map(r => [ROBOTS.indexOf(r.model), Math.round(r.x * 10), Math.round(r.z * 10), Math.round(r.h * 100)]);
   if (NET.isHost) pres.d = +S.dayT.toFixed(4);
   if (S.bets.length) pres.rb = rlMyBets().map(b => [b[0], b[1], +b[2].toFixed(2)]);
+  if (PL.ko) pres.ko = 1;
+  if (PL.hp < PL.max) pres.hp = Math.round(PL.hp);
+  const bo = NET.isHost && bossPres(); if (bo) pres.bo = bo;
   NET.tx.presence(pres);
 }
 setInterval(sendPresence, 50);
@@ -3316,10 +3794,11 @@ function frame(now) {
   let cutting = false;
   if (state === 'play') {
     S.stats.time += dt;
-    if (!shopOpen) updatePlayer(dt);
+    if (!shopOpen && !PL.ko) updatePlayer(dt);
     const handsFull = S.carry.length > 0;
-    cutting = !shopOpen && !handsFull && (mouseDown || cutToggle || touchCut);
+    cutting = !shopOpen && !handsFull && !PL.ko && (mouseDown || cutToggle || touchCut);
     placeCamera(T, cutting);
+    if (PL.ko) spectateCam();
     $('crosshair').hidden = tp;
     // the cutting box: in front of the mower deck, or where the crosshair meets the ground for hand tools
     const [hw, hd] = cutSize(), fx = -Math.sin(P.yaw), fz = -Math.cos(P.yaw);
@@ -3332,11 +3811,13 @@ function frame(now) {
     } else { cx = P.x + fx * T.fwd; cz = P.z + fz * T.fwd; }
     const res = handsFull ? { tough: 0, any: false } : cutAt(cx, cz, fx, fz, hw, hd, T.tier, cutting ? T.power * powerMult() : 0, cutting ? dt : 0, cutting ? 'player' : 'peek');
     if (res.cut && !S.ach.first_cut) unlock('first_cut');
+    bossPlayerHit(cx, cz, hw, hd, T, cutting, dt);
     const full = S.bag >= bagCap();
     const nd = nearDepot(), onPad = nd.dist < 3.2;
     if (onPad && S.held && (S.bag || S.carry.length)) setStatus(`Put down the ${toolDef(S.held).name} (G) to cash in`, 'warn');
     else if (handsFull) setStatus(`Carrying ${S.carry.length} bag${S.carry.length > 1 ? 's' : ''} · walk onto a drop-off pad, or G to set them down`, '');
     else if (full) setStatus(S.held ? `Bag full · B to drop it here, or put down the ${toolDef(S.held).name} (G) and carry it in` : 'Bag full · B to drop it here, or walk it to a drop-off', 'stop');
+    else if (res.locked && !res.any && !res.tough) setStatus(`The ${BOSSES[res.locked].name} guards the rest of the ${TIERS[res.locked].zone} · beat it to keep mowing`, 'stop');
     else if (res.tough && !res.any) {
       const need = TOOLS.find(t => t.tier >= res.tough);
       setStatus(`${TIERS[res.tough].name} is too tough · needs a Tier ${res.tough} tool like the ${need.name}`, 'warn');
@@ -3393,6 +3874,7 @@ function frame(now) {
   }
   updateParts(dt);
   updateRoulette(dt);
+  updateBoss(dt);
   flushDirty();
   updateLOD(dt);
   updateAudio(cutting, P.moving);
@@ -3476,7 +3958,7 @@ function graphicsClick(e) {
 $('resumeBtn').addEventListener('click', startPlaying);
 $('muteBtn').addEventListener('click', toggleMute);
 $('winKeep').addEventListener('click', startPlaying);
-$('winRegrow').addEventListener('click', () => { regrowAll(); S.won = false; save(); startPlaying(); });
+$('winRegrow').addEventListener('click', () => { regrowAll(); S.won = false; S.beaten = fresh().beaten; bossClear(); save(); startPlaying(); });
 let resetArmed = false;
 $('resetBtn').addEventListener('click', () => {
   if (!resetArmed) { resetArmed = true; $('resetBtn').textContent = 'Click again to wipe your save'; setTimeout(() => { resetArmed = false; $('resetBtn').textContent = 'Reset progress'; }, 3000); return; }
