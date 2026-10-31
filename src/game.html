@@ -127,6 +127,8 @@ body.bossOn #compass { top: calc(72px + env(safe-area-inset-top, 0px)); } /* bel
 .joinRow input { font-weight: 600; color: var(--ink); background: rgba(0,0,0,.3); border: 1px solid var(--line); border-radius: 8px; padding: 9px 10px; width: 100%; box-sizing: border-box; }
 .bigCode { font-family: var(--display); font-size: 44px; letter-spacing: .18em; color: var(--safety); }
 .roomRow { align-items: center; }
+#roomFromWrap { display: grid; gap: 12px; }
+#roomFromWrap .mpHint { margin: 0; }
 #roomStatus { color: var(--ink-dim); font-weight: 600; }
 #roomMode .tab[disabled] { cursor: default; opacity: .75; }
 .mpCols { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 14px; }
@@ -295,6 +297,11 @@ body.bossOn #compass { top: calc(72px + env(safe-area-inset-top, 0px)); } /* bel
     <div class="tabs" id="roomMode" role="group" aria-label="Lobby mode">
       <button class="tab" data-mode="coop">Co-op · one shared wallet</button>
       <button class="tab" data-mode="own">Shared map · own wallets</button>
+    </div>
+    <div id="roomFromWrap" hidden>
+      <p class="sectionLabel">Start from</p>
+      <div class="tabs" id="roomFrom" role="group" aria-label="Start from"><button class="tab" data-from="new">This lobby's map</button><button class="tab" data-from="solo">My solo game</button></div>
+      <p class="mpHint" id="roomFromHint"></p>
     </div>
     <p class="sectionLabel" id="roomCount">Players</p>
     <div class="players" id="roomPlayers"></div>
@@ -3184,7 +3191,7 @@ function secureTx(tx, slug) {
 // The host is whoever holds the key the lobby code was made from: in co-op it owns the shared wallet and runs the robots.
 // When the host leaves, the lobby closes.
 const NET = { on: false, lobby: '', mode: 'coop', coop: false, isHost: true, selfId: '', hostId: '', since: 0, name: '', color: 0, tx: null,
-  phase: 'play', roomAt: 0, peers: [], known: new Set(), blocked: new Set(), lastSackFrom: new Map(), led: new Map(), trust: new Map(), order: [], code: '', hostSeenAt: 0, rate: new Map(), gotSnap: false, wantTimer: 0, snapSentAt: new Map(), outCuts: [], cutTimer: 0, presTimer: 0, econKey: '', econAt: 0, econBeat: 0, persistTimer: 8, persisting: false, snapIn: new Map(), reqSeq: 0, pending: new Map(), hitAt: new Map(), earnQ: [] };
+  phase: 'play', roomAt: 0, peers: [], known: new Set(), blocked: new Set(), lastSackFrom: new Map(), led: new Map(), trust: new Map(), order: [], code: '', hostSeenAt: 0, rate: new Map(), gotSnap: false, wantTimer: 0, snapSentAt: new Map(), outCuts: [], cutTimer: 0, presTimer: 0, econKey: '', econAt: 0, econBeat: 0, persistTimer: 8, persisting: false, snapIn: new Map(), reqSeq: 0, pending: new Map(), hitAt: new Map(), earnQ: [], startFrom: 'new' };
 const PLAYER_COLORS = [0xe8742c, 0x3f8fe0, 0xd04a8a, 0x2fb07a, 0xf2c230, 0x9a6ae0, 0xe04a4a, 0x40c8d0];
 const lobbySlug = s => s.toLowerCase().trim().replace(/[^a-z0-9_.-]+/g, '-').replace(/^[^a-z0-9]+/, '').slice(0, 40) || 'lobby';
 const colorFor = id => { let h = 0; for (const ch of id) h = (h * 31 + ch.charCodeAt(0)) >>> 0; return h % PLAYER_COLORS.length; };
@@ -3833,6 +3840,15 @@ function renderRoom() {
   $('roomCount').textContent = `Players · ${n}`;
   playerList($('roomPlayers'));
   $('roomStart').hidden = !NET.isHost;
+  // the host can bring their solo game (a loaded save file, say) into the lobby
+  const solo = NET.isHost && readSoloSave();
+  $('roomFromWrap').hidden = !solo;
+  if (solo) {
+    $('roomFrom').querySelectorAll('button').forEach(b => b.setAttribute('aria-selected', b.dataset.from === NET.startFrom));
+    $('roomFromHint').textContent = NET.startFrom === 'solo'
+      ? `Your solo mowing comes with you, plus its money and gear (${saveSummary(solo)})${NET.coop ? ' into the shared wallet' : ''}.`
+      : 'Start with this lobby as it is.';
+  }
   const host = NET.peers.find(p => p.id === NET.hostId)?.pres?.n;
   $('roomStatus').textContent = NET.isHost ? (n === 1 ? 'Waiting for friends · you can start alone too' : '') : `Waiting for ${host ? String(host).slice(0, 16) : 'the host'} to start…`;
 }
@@ -3841,8 +3857,23 @@ function beginPlay() {
   if (NET.phase === 'play') return;
   NET.phase = 'play';
   $('roomScreen').hidden = true;
+  const fromSolo = NET.isHost && NET.startFrom === 'solo' && importSolo();
   startPlaying();
-  toast(NET.isHost ? `Game on · late friends can still join with ${NET.lobby}` : 'The host started the game', 'good', 3);
+  toast(NET.isHost ? `Game on${fromSolo ? ' from your solo game' : ''} · late friends can still join with ${NET.lobby}` : 'The host started the game', 'good', 3);
+}
+const readSoloSave = () => { try { const s = JSON.parse(localStorage.getItem(SAVE_KEY)); return s && (s.stats?.cut > 0 || s.money > 0 || Object.keys(s.owned || {}).length > 1) ? s : null; } catch (e) { return null; } };
+// the host's solo game becomes the lobby's starting point: its mowing, money and gear
+function importSolo() {
+  const s = readSoloSave(); if (!s) return false;
+  if (typeof s.cutBits === 'string' && s.gridSig === gridSig) try { mergeCutBits(fromB64(s.cutBits)); } catch (e) {}
+  applyEcon({ money: s.money, earned: s.stats?.earned, owned: s.owned, up: s.up, robots: s.robots, outposts: s.outposts });
+  if (S.owned[s.pocket] && toolDef(s.pocket)?.pocket) { S.pocket = s.pocket; if (!S.held && !S.carry.length) S.tool = s.pocket; }
+  for (let t = 1; t <= 6; t++) if (Array.isArray(s.beaten) && s.beaten[t]) S.beaten[t] = S.met[t] = true;
+  syncTool(); save(); persistLobby();
+  // everyone already here gets the lobby again, now with the imported map
+  NET.snapSentAt.clear();
+  for (const p of NET.peers) sendSnapTo(p.id);
+  return true;
 }
 function blockPlayer(id) {
   NET.blocked.add(id); renderRoom();
@@ -3886,6 +3917,10 @@ function leaveLobby(note) {
   $('menuBtn').addEventListener('click', () => { save(); location.reload(); });
   $('roomStart').addEventListener('click', () => { if (NET.isHost) beginPlay(); });
   $('roomLeave').addEventListener('click', () => { if (NET.isHost) { netSend('close', {}); setTimeout(() => leaveLobby(), 400); } else leaveLobby(); }); // a host leaving the room closes it
+  $('roomFrom').addEventListener('click', e => {
+    const b = e.target.closest('button[data-from]'); if (!b || !NET.isHost) return;
+    NET.startFrom = b.dataset.from; renderRoom();
+  });
   $('roomMode').addEventListener('click', e => {
     const b = e.target.closest('button[data-mode]'); if (!b || !NET.isHost) return;
     setMode(b.dataset.mode); if (settings.hosted) { settings.hosted.mode = NET.mode; saveSettings(); } renderRoom();
@@ -4150,7 +4185,7 @@ $('resetBtn').addEventListener('click', () => {
 const SAVE_TAG = 'cut-above-save', CODE_PREFIX = 'CUTABOVE1:';
 function exportSave() { if (state !== 'start') save(); return { game: SAVE_TAG, v: 3, savedAt: new Date().toISOString(), save: S }; }
 const allCells = () => tierCount.reduce((a, b) => a + b, 0);
-const saveSummary = s => { const pct = Math.min(100, (s.stats?.cut || 0) / allCells() * 100); return `${fmt(+s.money || 0)} · ${pct.toFixed(pct < 1 ? 2 : 1)}% mowed`; };
+const saveSummary = s => { const pct = Math.min(100, (s.stats?.cut || 0) / allCells() * 100); return `${fmt(+s.money || 0)} · ${pct.toFixed(pct < 1 ? 2 : 1)}% of the map mowed`; };
 function saveMsg(box, msg, err) { const m = box.querySelector('.saveMsg'); m.textContent = msg; m.classList.toggle('err', !!err); }
 function codeBox(box, mode, code = '') {
   const cb = box.querySelector('.saveCodeBox'), ta = cb.querySelector('textarea');
