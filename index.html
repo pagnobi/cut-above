@@ -2849,9 +2849,15 @@ const ICONS = {
 ['r2:#ffb020', 'r3:#ff4f8b', 'r4:#b98bff'].forEach(s => { const [k, c] = s.split(':'); ICONS[k] = ICONS.r1.replace('#4aa3ff', c); });
 const icon = id => `<svg viewBox="0 0 32 32" aria-hidden="true">${ICONS[id] || ''}</svg>`;
 function toolDist(id) { const a = S.toolAt[id]; return a ? Math.hypot(a.x - P.x, a.z - P.z) : 0; }
+// big gear you own that isn't in your hands or on the ground (in co-op, bought by another player) waits by the shed
+function placeLostGear() {
+  let k = 0;
+  for (const t of TOOLS) if (S.owned[t.id] && !t.pocket && S.held !== t.id && !S.toolAt[t.id]) { S.toolAt[t.id] = { x: SHED.x - 5 - 2.2 * k++, z: SHED.z + 5, yaw: 0 }; spawnToolMesh(t.id); }
+}
 // the hotbar holds only tools you own, numbered 1, 2, 3… in tier order
 const hotbarTools = () => TOOLS.filter(t => S.owned[t.id]);
 function buildHotbar() {
+  placeLostGear();
   const html = hotbarTools().map((t, k) => {
     const active = S.tool === t.id && !S.carry.length, away = !t.pocket && S.held !== t.id;
     return `<div class="slot ${active ? 'active' : ''} ${away ? 'away' : ''}" title="${t.name}"><span class="key">${HOTLABELS[k]}</span>${icon(t.id)}${away ? `<span class="dist">${Math.round(toolDist(t.id))}m</span>` : ''}<span class="tier" style="color:${TIERS[t.tier].color}">T${t.tier}</span></div>`;
@@ -2991,6 +2997,7 @@ function afterShop(act, id, mine) {
     toast(`Bought the ${t.name}!`, 'good');
   }
   if (act === 'robot') { syncRobotSims(); if (act === 'robot' && mine) { toast(`${ROBOTS.find(r => r.id === id).name} deployed`, 'good'); unlock('first_robot'); } }
+  if (act === 'tool' && !mine) placeLostGear(); // someone else in the lobby bought it
   if (act === 'outpost') { rebuildDepots(); if (act === 'outpost' && mine) toast(`${OUTPOSTS[+id].name} built`, 'good'); }
   syncTool(); save(); if (shopOpen) renderShop();
 }
