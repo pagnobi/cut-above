@@ -187,8 +187,6 @@ body.bossOn #compass { top: calc(72px + env(safe-area-inset-top, 0px)); } /* bel
 .buy.owned { background: transparent; color: var(--ink-dim); box-shadow: inset 0 0 0 1px var(--line); }
 .buy.equip { background: var(--safety); color: #1c1500; }
 .btns { display: flex; gap: 6px; flex-wrap: wrap; justify-content: flex-end; }
-.buy.sell { background: transparent; color: var(--ink-dim); box-shadow: inset 0 0 0 1px var(--line); min-width: 0; font-size: 12px; }
-.buy.sell:hover { color: var(--ink); }
 .stuck { padding: 10px 12px; border-radius: 10px; border: 1px solid var(--warn); color: #ffd2a8; background: rgba(255,154,60,.08); font-weight: 600; }
 .lvl { display: inline-flex; gap: 3px; vertical-align: middle; }
 .lvl i { width: 9px; height: 9px; border-radius: 2px; background: rgba(255,255,255,.15); }
@@ -208,6 +206,7 @@ body.bossOn #compass { top: calc(72px + env(safe-area-inset-top, 0px)); } /* bel
 #tBag { right: calc(64px + env(safe-area-inset-right, 0px)); bottom: calc(226px + env(safe-area-inset-bottom, 0px)); }
 #tTool { right: calc(204px + env(safe-area-inset-right, 0px)); bottom: calc(160px + env(safe-area-inset-bottom, 0px)); }
 #tSprint { right: calc(204px + env(safe-area-inset-right, 0px)); bottom: calc(230px + env(safe-area-inset-bottom, 0px)); }
+#tJump { right: calc(274px + env(safe-area-inset-right, 0px)); bottom: calc(195px + env(safe-area-inset-bottom, 0px)); }
 
 @media (max-width: 900px) {
   .slot { width: 44px; height: 48px; }
@@ -267,6 +266,7 @@ body.bossOn #compass { top: calc(72px + env(safe-area-inset-top, 0px)); } /* bel
   <div class="tbtn" id="tBag">BAG</div>
   <div class="tbtn" id="tTool">TOOL</div>
   <div class="tbtn" id="tSprint">RUN</div>
+  <div class="tbtn" id="tJump">JUMP</div>
 </div>
 
 <div class="overlay" id="startScreen">
@@ -358,6 +358,7 @@ body.bossOn #compass { top: calc(72px + env(safe-area-inset-top, 0px)); } /* bel
       </div>
       <div class="keys" id="pauseKeys">
         <kbd>WASD</kbd><span>Walk (Shift to sprint)</span>
+        <kbd>Space</kbd><span>Jump (on foot)</span>
         <kbd>Mouse</kbd><span>Look around</span>
         <kbd>Hold click</kbd><span>Cut the grass in front of you (F toggles auto-cut)</span>
         <kbd>E</kbd><span>Pick up tools and bags, get on mowers, open the shop on a pad</span>
@@ -1235,7 +1236,7 @@ function rebuildDepots() {
 }
 
 // ===================== PLAYER / TOOL MODELS =====================
-const P = { x: 0, z: 3, yaw: 0, pitch: -0.35, vx: 0, vz: 0, bob: 0, moving: false };
+const P = { x: 0, z: 3, y: 0, vy: 0, yaw: 0, pitch: -0.35, vx: 0, vz: 0, bob: 0, moving: false };
 P.yaw = Math.atan2(-(SHED.x - P.x), -(SHED.z - P.z));
 const handGroup = new THREE.Group(); camera.add(handGroup);
 const rideGroup = new THREE.Group(); scene.add(rideGroup);
@@ -1920,9 +1921,10 @@ function bossResolve(dt) {
   if (BOSS.sk !== BOSS.mySk) {
     BOSS.mySk = BOSS.sk;
     if (A.type === 'bite' && d < B.reach + B.r + 0.4 && (inFront(1.25) || d < B.r + 0.4)) hurt(B.dmg);
-    if (A.type === 'slam') { if (d < SLAM_R(BOSS.t)) hurt(B.dmg * 1.5); if (d < 40) { slamSound(); slamFx.position.x = A.x; slamFx.position.z = A.z; slamFx.userData.t = 0; } }
+    // jumping clears a slam's shockwave and a charge
+    if (A.type === 'slam') { if (d < SLAM_R(BOSS.t) && P.y < 0.5) hurt(B.dmg * 1.5); if (d < 40) { slamSound(); slamFx.position.x = A.x; slamFx.position.z = A.z; slamFx.userData.t = 0; } }
   }
-  if (BOSS.st === 'charge' && BOSS.chargeHit !== BOSS.as && Math.hypot(P.x - BOSS.dx, P.z - BOSS.dz) < B.r * 1.15 + 1) { BOSS.chargeHit = BOSS.as; hurt(B.dmg * 1.6); }
+  if (BOSS.st === 'charge' && BOSS.chargeHit !== BOSS.as && P.y < 0.5 && Math.hypot(P.x - BOSS.dx, P.z - BOSS.dz) < B.r * 1.15 + 1) { BOSS.chargeHit = BOSS.as; hurt(B.dmg * 1.6); }
   if (BOSS.st === 'breath' && d < BREATH_R && inFront(BREATH_HALF)) hurt(B.dmg * 1.4 * dt, true);
 }
 function applyBossWin(t) {
@@ -2641,6 +2643,7 @@ addEventListener('keydown', e => {
   if (e.code === 'KeyG') putDown();
   if (e.code === 'KeyB') dropBag();
   if (e.code === 'KeyF') cutToggle = !cutToggle;
+  if (e.code === 'Space') { e.preventDefault(); jump(); }
 });
 addEventListener('keyup', e => keys.delete(e.code));
 addEventListener('blur', () => { keys.clear(); mouseDown = false; });
@@ -2693,11 +2696,12 @@ if (isTouch) {
   const hold = (id, on, off) => { const el = document.getElementById(id); el.addEventListener('touchstart', e => { e.preventDefault(); initAudio(); on(); }, { passive: false }); el.addEventListener('touchend', e => { e.preventDefault(); off && off(); }); };
   hold('tCut', () => touchCut = true, () => touchCut = false);
   hold('tSprint', () => touchSprint = true, () => touchSprint = false);
+  hold('tJump', () => jump());
   hold('tUse', () => { if (shopOpen) closeShop(); else useAction(); });
   hold('tDrop', () => putDown());
   hold('tBag', () => dropBag());
   hold('tTool', () => { const owned = TOOLS.filter(t => t.pocket && S.owned[t.id]); const k = owned.findIndex(t => t.id === S.pocket); selectTool(owned[(k + 1) % owned.length].id); });
-  document.getElementById('pauseKeys').innerHTML = '<kbd>Left stick</kbd><span>Walk</span><kbd>Drag right</kbd><span>Look around</span><kbd>CUT</kbd><span>Hold to cut the grass in the box</span><kbd>USE</kbd><span>Pick up, get on, or open the shop</span><kbd>DROP</kbd><span>Put down what you\'re holding</span><kbd>BAG</kbd><span>Drop your bag here</span><kbd>II</kbd><span>Progress and trophies</span>';
+  document.getElementById('pauseKeys').innerHTML = '<kbd>Left stick</kbd><span>Walk</span><kbd>Drag right</kbd><span>Look around</span><kbd>JUMP</kbd><span>Jump</span><kbd>CUT</kbd><span>Hold to cut the grass in the box</span><kbd>USE</kbd><span>Pick up, get on, or open the shop</span><kbd>DROP</kbd><span>Put down what you\'re holding</span><kbd>BAG</kbd><span>Drop your bag here</span><kbd>II</kbd><span>Progress and trophies</span>';
 }
 
 // ===================== HOLDING, DROPPING, CARRYING =====================
@@ -2920,17 +2924,15 @@ function renderShop() {
       if (!own) btn = `<button class="buy" data-act="tool" data-id="${t.id}" ${S.money < t.price ? 'disabled' : ''}>${fmt(t.price)}</button>`;
       else if (t.pocket) btn = S.pocket === t.id ? `<button class="buy owned" disabled>In pocket</button>` : `<button class="buy equip" data-act="equip" data-id="${t.id}">Equip</button>`;
       else btn = S.held === t.id ? `<button class="buy owned" disabled>In hand</button>` : `<button class="buy equip" data-act="locate" data-id="${t.id}">Find · ${Math.round(toolDist(t.id))} m</button>`;
-      const sell = own && t.id !== 'scissors' ? `<button class="buy sell" data-act="sellTool" data-id="${t.id}">Sell ${fmt(refund(t.price))}</button>` : '';
-      return `<div class="item"><div class="ico">${icon(t.id)}</div><div><h3>${t.name}</h3><div class="meta"><span class="chip"><span class="swatch" style="background:${TIERS[t.tier].color}"></span>Cuts up to <b>${TIERS[t.tier].name}</b></span><span>Cut <b>${(t.hw * 2).toFixed(1)} × ${(t.hd * 2).toFixed(1)} m</b></span><span>Power <b>${t.power}</b></span>${t.speed > 1 ? `<span>Speed <b>×${t.speed}</b></span>` : ''}<span>${t.pocket ? 'Pocket tool' : t.kind === 'ride' ? 'Ride-on' : 'Big gear'}</span></div><div class="meta">${t.desc}</div></div><div class="btns">${sell}${btn}</div></div>`;
+      return `<div class="item"><div class="ico">${icon(t.id)}</div><div><h3>${t.name}</h3><div class="meta"><span class="chip"><span class="swatch" style="background:${TIERS[t.tier].color}"></span>Cuts up to <b>${TIERS[t.tier].name}</b></span><span>Cut <b>${(t.hw * 2).toFixed(1)} × ${(t.hd * 2).toFixed(1)} m</b></span><span>Power <b>${t.power}</b></span>${t.speed > 1 ? `<span>Speed <b>×${t.speed}</b></span>` : ''}<span>${t.pocket ? 'Pocket tool' : t.kind === 'ride' ? 'Ride-on' : 'Big gear'}</span></div><div class="meta">${t.desc}</div></div><div class="btns">${btn}</div></div>`;
     }).join('');
   } else if (shopTab === 'upgrades') {
     const tier = upgradeTier();
     html = UPGRADES.map(u => {
       const l = S.up[u.id], maxed = l >= u.max, c = maxed ? 0 : u.cost(l), cap = levelCap(u, tier), locked = !maxed && l >= cap;
       const btn = maxed ? `<button class="buy owned" disabled>Maxed</button>` : locked ? `<button class="buy owned" disabled>Locked</button>` : `<button class="buy" data-act="up" data-id="${u.id}" ${S.money < c ? 'disabled' : ''}>${fmt(c)}</button>`;
-      const sell = l > 0 ? `<button class="buy sell" data-act="sellUp" data-id="${u.id}">Sell 1 level ${fmt(refund(u.cost(l - 1)))}</button>` : '';
       const why = locked ? `<div class="meta" style="color:var(--warn)">Next level unlocks after you mow ${UNLOCK_FRAC * 100}% of the ${TIERS[unlockZoneFor(u, l)].zone}</div>` : '';
-      return `<div class="item"><div class="ico">${icon(u.id)}</div><div><h3>${u.name} ${lvlDots(l, u.max, Math.max(cap, l))}</h3><div class="meta">${u.desc(l)}</div>${why}</div><div class="btns">${sell}${btn}</div></div>`;
+      return `<div class="item"><div class="ico">${icon(u.id)}</div><div><h3>${u.name} ${lvlDots(l, u.max, Math.max(cap, l))}</h3><div class="meta">${u.desc(l)}</div>${why}</div><div class="btns">${btn}</div></div>`;
     }).join('');
     html = (tier < 6 ? `<div class="unlockNote">Upgrade tier <b>${tier} of 6</b>. Mow ${UNLOCK_FRAC * 100}% of the <b>${TIERS[tier + 1].zone}</b> to unlock more levels (now ${(cutCount[tier + 1] / tierCount[tier + 1] * 100).toFixed(1)}%).</div>` : `<div class="unlockNote">Every upgrade level is unlocked.</div>`) + html;
   } else if (shopTab === 'robots') {
@@ -2940,20 +2942,18 @@ function renderShop() {
       const btn = n >= ROBOT_MAX ? `<button class="buy owned" disabled>Fleet full</button>` : n >= cap ? `<button class="buy owned" disabled>Locked</button>` : `<button class="buy" data-act="robot" data-id="${r.id}" ${S.money < c ? 'disabled' : ''}>${fmt(c)}</button>`;
       let next = 0; for (let k = tier + 1; k <= 6 && !next; k++) if (robotCap(r, k) > n) next = k;
       const why = n < ROBOT_MAX && n >= cap && next ? `<div class="meta" style="color:var(--warn)">${cap ? 'More unlock' : 'Unlocks'} after you mow ${UNLOCK_FRAC * 100}% of the ${TIERS[next].zone}</div>` : '';
-      const sell = n ? `<button class="buy sell" data-act="sellRobot" data-id="${r.id}">Sell one ${fmt(refund(Math.round(r.price * 1.4 ** (n - 1))))}</button>` : '';
       const spec = r.kind === 'collector' ? `<span>Carries <b>${r.cap} bags</b></span>` : `<span class="chip"><span class="swatch" style="background:${TIERS[r.tier].color}"></span>Cuts up to <b>${TIERS[r.tier].name}</b></span><span>Width <b>${(r.r * 2).toFixed(1)} m</b></span>`;
-      return `<div class="item"><div class="ico">${icon(r.id)}</div><div><h3>${r.name} <span style="font-size:14px;color:var(--ink-dim)">· ${n} / ${Math.max(cap, n)} owned</span></h3><div class="meta">${spec}</div><div class="meta">${r.desc}</div>${why}</div><div class="btns">${sell}${btn}</div></div>`;
+      return `<div class="item"><div class="ico">${icon(r.id)}</div><div><h3>${r.name} <span style="font-size:14px;color:var(--ink-dim)">· ${n} / ${Math.max(cap, n)} owned</span></h3><div class="meta">${spec}</div><div class="meta">${r.desc}</div>${why}</div><div class="btns">${btn}</div></div>`;
     }).join('');
   } else {
     html = `<div class="meta" style="padding:0 4px 4px">A drop-off lets you cash in bags and shop out in the field. Each zone has four sites; unbuilt ones show a FOR SALE sign.</div>` + OUTPOSTS.map((o, k) => {
       const built = S.outposts[k], d = depots[k + 1];
       const btn = built ? `<button class="buy owned" disabled>Built</button>` : `<button class="buy" data-act="outpost" data-id="${k}" ${S.money < o.price ? 'disabled' : ''}>${fmt(o.price)}</button>`;
-      const sell = built ? `<button class="buy sell" data-act="sellOutpost" data-id="${k}">Sell ${fmt(refund(o.price))}</button>` : '';
-      return `<div class="item"><div class="ico">${icon('outpost')}</div><div><h3>${o.name}</h3><div class="meta"><span class="chip"><span class="swatch" style="background:${TIERS[o.tier].color}"></span>In the <b>${TIERS[o.tier].zone}</b></span><span><b>${Math.round(Math.hypot(d.x - P.x, d.z - P.z))} m</b> from here</span></div></div><div class="btns">${sell}${btn}</div></div>`;
+      return `<div class="item"><div class="ico">${icon('outpost')}</div><div><h3>${o.name}</h3><div class="meta"><span class="chip"><span class="swatch" style="background:${TIERS[o.tier].color}"></span>In the <b>${TIERS[o.tier].zone}</b></span><span><b>${Math.round(Math.hypot(d.x - P.x, d.z - P.z))} m</b> from here</span></div></div><div class="btns">${btn}</div></div>`;
     }).join('');
   }
   const st = stuckInfo();
-  const note = st ? `<div class="stuck">You're ${fmt(st.short)} short of the ${st.next.name}, even after cutting everything you can reach. Upgrades and robots sell back for 75% of what you paid, so selling a few can cover it.</div>` : '';
+  const note = st ? `<div class="stuck">You're ${fmt(st.short)} short of the ${st.next.name}, even after cutting everything you can reach. Your robots and boss bounties can still earn the rest.</div>` : '';
   $('shopList').innerHTML = note + html;
 }
 $('shopList').addEventListener('click', e => {
@@ -2964,22 +2964,15 @@ $('shopList').addEventListener('click', e => {
   shopAction(act, id);
 });
 // The wallet's owner (you in solo or own-wallet lobbies, the host in co-op) applies purchases and sales.
-// selling gives back 75% of what you paid: still a safety net, but upgrades and robots aren't free any more
-const REFUND = 0.75;
-const refund = c => Math.round(c * REFUND * 100) / 100;
+// everything you buy is yours for good: nothing sells back
 function econAct(act, id) {
   const pay = c => { if (S.money < c) return false; S.money -= c; return true; };
   if (act === 'tool') { const t = toolDef(id); return !!t && !S.owned[id] && pay(t.price) && (S.owned[id] = true); }
-  if (act === 'sellTool') { const t = toolDef(id); if (!t || !S.owned[id] || id === 'scissors') return false; delete S.owned[id]; S.money += refund(t.price); return true; }
   if (act === 'up') { const u = UPGRADES.find(u => u.id === id); if (!u || S.up[id] >= Math.min(u.max, levelCap(u, upgradeTier())) || !pay(u.cost(S.up[id]))) return false; S.up[id]++; return true; }
-  if (act === 'sellUp') { const u = UPGRADES.find(u => u.id === id); if (!u || S.up[id] <= 0) return false; S.up[id]--; S.money += refund(u.cost(S.up[id])); return true; }
   if (act === 'robot') { const r = ROBOTS.find(r => r.id === id); if (!r || S.robots.filter(x => x === id).length >= robotCap(r, upgradeTier()) || !pay(robotPrice(r))) return false; S.robots.push(id); return true; }
-  if (act === 'sellRobot') { const r = ROBOTS.find(r => r.id === id), k = S.robots.lastIndexOf(id); if (!r || k < 0) return false; S.robots.splice(k, 1); S.money += refund(robotPrice(r)); return true; }
   if (act === 'outpost') { const k = +id; if (!OUTPOSTS[k] || S.outposts[k] || !pay(OUTPOSTS[k].price)) return false; S.outposts[k] = true; return true; }
-  if (act === 'sellOutpost') { const k = +id; if (!OUTPOSTS[k] || !S.outposts[k]) return false; S.outposts[k] = false; S.money += refund(OUTPOSTS[k].price); return true; }
   return false;
 }
-const isSale = act => act.startsWith('sell');
 function cleanupTool(id) {
   if (S.held === id) S.held = null;
   if (S.pocket === id) S.pocket = 'scissors';
@@ -2997,15 +2990,14 @@ function afterShop(act, id, mine) {
     }
     toast(`Bought the ${t.name}!`, 'good');
   }
-  if (act === 'sellTool') { cleanupTool(id); if (mine) toast(`Sold the ${toolDef(id).name} for ${fmt(refund(toolDef(id).price))}`, 'good'); }
-  if (act === 'robot' || act === 'sellRobot') { syncRobotSims(); if (act === 'robot' && mine) { toast(`${ROBOTS.find(r => r.id === id).name} deployed`, 'good'); unlock('first_robot'); } }
-  if (act === 'outpost' || act === 'sellOutpost') { rebuildDepots(); if (act === 'outpost' && mine) toast(`${OUTPOSTS[+id].name} built`, 'good'); }
+  if (act === 'robot') { syncRobotSims(); if (act === 'robot' && mine) { toast(`${ROBOTS.find(r => r.id === id).name} deployed`, 'good'); unlock('first_robot'); } }
+  if (act === 'outpost') { rebuildDepots(); if (act === 'outpost' && mine) toast(`${OUTPOSTS[+id].name} built`, 'good'); }
   syncTool(); save(); if (shopOpen) renderShop();
 }
 function shopAction(act, id) {
   if (NET.coop && !NET.isHost) { netRequest({ k: 'shop', act, id }); return; }
   if (!econAct(act, id)) { denySound(); return; }
-  isSale(act) ? sellSound() : buySound();
+  buySound();
   afterShop(act, id, true);
   if (NET.coop) netNote(act, id, NET.name);
 }
@@ -3381,9 +3373,9 @@ function netRequest(req) {
   if (NET.pending.size > 50) NET.pending.delete(NET.pending.keys().next().value);
   netSend('req', { ...req, rq, to: NET.hostId });
 }
-const NOTE_VERB = { tool: 'bought the', sellTool: 'sold the', robot: 'deployed a', sellRobot: 'sold a', outpost: 'built the', sellOutpost: 'sold the', up: 'upgraded', sellUp: 'sold a level of' };
+const NOTE_VERB = { tool: 'bought the', robot: 'deployed a', outpost: 'built the', up: 'upgraded' };
 function netNote(act, id, who) {
-  const thing = act === 'tool' || act === 'sellTool' ? toolDef(id)?.name : act === 'robot' || act === 'sellRobot' ? ROBOTS.find(r => r.id === id)?.name : act.includes('utpost') ? OUTPOSTS[+id]?.name : UPGRADES.find(u => u.id === id)?.name;
+  const thing = act === 'tool' ? toolDef(id)?.name : act === 'robot' ? ROBOTS.find(r => r.id === id)?.name : act.includes('utpost') ? OUTPOSTS[+id]?.name : UPGRADES.find(u => u.id === id)?.name;
   if (thing) netSend('note', { msg: `${who} ${NOTE_VERB[act]} ${thing}` });
 }
 
@@ -3522,7 +3514,7 @@ function updateAvatars(dt) {
     if (Math.hypot(dx, dz) > 8) { av.x = px; av.z = pz; } else { av.x += dx * f; av.z += dz * f; } // snap after teleports
     const moving = Math.hypot(+pr.vx || 0, +pr.vz || 0) > 0.3;
     let dy = (pr.y || 0) - av.yaw; dy = ((dy + Math.PI * 3) % (Math.PI * 2)) - Math.PI; av.yaw += dy * f;
-    av.root.position.set(av.x, 0, av.z); av.root.rotation.y = av.yaw; av.root.rotation.z = pr.ko ? 1.35 : 0; // knocked out: lying down
+    av.root.position.set(av.x, Math.min(2, Math.max(0, +pr.j || 0)), av.z); av.root.rotation.y = av.yaw; av.root.rotation.z = pr.ko ? 1.35 : 0; // knocked out: lying down
     av.bob = (av.bob || 0) + (moving ? dt * 9 : 0);
     av.body.legs.forEach((l, k) => l.rotation.x = moving ? Math.sin(av.bob + k * Math.PI) * 0.45 : 0);
     // robots this player is running
@@ -3633,7 +3625,7 @@ function wireNet(tx0) {
     if (!d || d.to !== NET.selfId || from !== NET.hostId || !NET.pending.has(d.rq)) return;
     // act on what we asked for, not on what the answer claims
     const req = NET.pending.get(d.rq); NET.pending.delete(d.rq);
-    if (d.ok) { isSale(req.act) ? sellSound() : buySound(); afterShop(req.act, req.id, true); }
+    if (d.ok) { buySound(); afterShop(req.act, req.id, true); }
     else { denySound(); toast('The shared wallet couldn\'t cover that', 'warn'); }
   });
   tx.on('sack', (d, from) => {
@@ -3699,6 +3691,7 @@ function sendPresence() {
   if (NET.isHost) pres.d = +S.dayT.toFixed(4);
   if (S.bets.length) pres.rb = rlMyBets().map(b => [b[0], b[1], +b[2].toFixed(2)]);
   if (PL.ko) pres.ko = 1;
+  if (P.y > 0) pres.j = +P.y.toFixed(2);
   if (PL.hp < PL.max) pres.hp = Math.round(PL.hp);
   const bo = NET.isHost && bossPres(); if (bo) pres.bo = bo;
   NET.tx.presence(pres);
@@ -3957,6 +3950,12 @@ const hudCache = {};
 function setText(id, v) { if (hudCache[id] !== v) { hudCache[id] = v; $(id).innerHTML = v; } }
 function setStyle(id, prop, v) { const k = id + prop; if (hudCache[k] !== v) { hudCache[k] = v; $(id).style[prop] = v; } }
 let snipPhase = 0, tooToughCooldown = 0, mmTimer = 0, huntTimer = 0, saveTimer = 0, sellCooldown = 0, hotbarTimer = 0, last = performance.now();
+// on foot you can jump; not while pushing or riding a mower
+const JUMP_V = 6.2, JUMP_G = 18;
+function jump() {
+  if (P.y > 0 || PL.ko || shopOpen || (S.held && toolDef(S.held).kind !== 'hand')) return;
+  P.vy = JUMP_V; P.y = 0.001; blip(320, 0.12, 'triangle', 0.12); blip(480, 0.1, 'triangle', 0.08, 0.05);
+}
 function updatePlayer(dt) {
   const T = tool();
   let fx = 0, fz = 0;
@@ -3980,6 +3979,11 @@ function updatePlayer(dt) {
   const p = pushOut(P.x + P.vx * dt, P.z + P.vz * dt, T.kind === 'ride' ? 0.8 : T.kind === 'push' ? 0.5 : 0.4);
   P.x = p[0]; P.z = p[1];
   const sp = Math.hypot(P.vx, P.vz); P.moving = sp > 0.4;
+  // jumping: about a metre up and back down in under a second
+  if (P.y > 0 || P.vy > 0) {
+    P.vy -= JUMP_G * dt; P.y += P.vy * dt;
+    if (P.y <= 0) { P.y = 0; P.vy = 0; noiseBurst(400, 'lowpass', 0.08, 0.25); }
+  }
   P.bob += sp * dt * (T.kind === 'ride' ? 0 : 2.1);
 }
 function showCompass(tx, tz, text) {
@@ -3999,7 +4003,7 @@ function placeCamera(T, cutting) {
     camera.position.set(_target.x - fx * cp * dist, Math.max(0.6, _target.y - Math.sin(pitch) * dist), _target.z - fz * cp * dist);
     camera.lookAt(_target);
   } else {
-    camera.position.set(P.x, 1.65 + Math.sin(P.bob * 2) * 0.045, P.z);
+    camera.position.set(P.x, 1.65 + P.y + (P.y > 0 ? 0 : Math.sin(P.bob * 2) * 0.045), P.z);
     camera.rotation.set(P.pitch, P.yaw, 0);
   }
 }
@@ -4014,7 +4018,7 @@ function frame(now) {
     S.stats.time += dt;
     if (!shopOpen && !PL.ko) updatePlayer(dt);
     const handsFull = S.carry.length > 0;
-    cutting = !shopOpen && !handsFull && !PL.ko && (mouseDown || cutToggle || touchCut);
+    cutting = !shopOpen && !handsFull && !PL.ko && P.y < 0.25 && (mouseDown || cutToggle || touchCut); // no cutting mid-air
     placeCamera(T, cutting);
     if (PL.ko) spectateCam();
     $('crosshair').hidden = tp;
