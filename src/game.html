@@ -473,7 +473,7 @@ const HOUSE = { x: -9, z: 6, w: 7, d: 6 };
 const SAVE_KEY = 'cutabove_save_v3';
 const fresh = () => ({ money: 0, owned: { scissors: true }, pocket: 'scissors', held: null, toolAt: {}, carry: [], sacks: [], tool: 'scissors',
   up: { bag: 0, arms: 0, shoes: 0, buyer: 0, blades: 0, deck: 0, tune: 0 }, robots: [], outposts: OUTPOSTS.map(() => false),
-  stats: { cut: 0, earned: 0, time: 0 }, bag: 0, bagValue: 0, muted: false, ach: {}, cutBits: '', gridSig: '', won: false, px: 0, pz: 3, yaw: null, dayT: 0.3, upTier: 1 });
+  stats: { cut: 0, earned: 0, time: 0 }, bag: 0, bagValue: 0, muted: false, ach: {}, cutBits: '', gridSig: '', won: false, px: 0, pz: 3, yaw: null, dayT: 0.3, upTier: 1, bets: [] });
 let S = fresh();
 function loadInto(data) {
   if (!data) return;
@@ -486,6 +486,7 @@ function loadInto(data) {
   S.toolAt = Object.assign({}, data.toolAt || {});
   S.carry = Array.isArray(data.carry) ? data.carry : [];
   S.sacks = Array.isArray(data.sacks) ? data.sacks.filter(s => isFinite(s.x) && isFinite(s.z)) : [];
+  S.bets = Array.isArray(data.bets) ? data.bets.filter(b => ['red', 'black', 'green'].includes(b?.c) && b.v > 0 && b.n > 0).slice(0, 3) : [];
   if (!Array.isArray(S.outposts) || S.outposts.length !== OUTPOSTS.length) S.outposts = f.outposts;
   S.robots = (S.robots || []).filter(id => ROBOTS.find(r => r.id === id));
   if (!toolDef(S.pocket)?.pocket || !S.owned[S.pocket]) S.pocket = 'scissors';
@@ -606,7 +607,17 @@ for (const d of depots) {
   d.bx = d.x + ax * 3.3; d.bz = d.z + az * 3.3;
   clearings.push({ x: d.bx, z: d.bz, r: 2.2 });
 }
-colliders.push({ type: 'b', x0: HOUSE.x - HOUSE.w / 2, x1: HOUSE.x + HOUSE.w / 2, z0: HOUSE.z - HOUSE.d / 2, z1: HOUSE.z + HOUSE.d / 2 });
+// the house is hollow: four walls with a doorway at the front (local x 0.5 to 1.9) and the roulette table inside
+const HW = 0.2, HOUSE_DOOR = [0.5, 1.9];
+const houseBox = (x0, x1, z0, z1, extra) => colliders.push(Object.assign({ type: 'b', x0: HOUSE.x + x0, x1: HOUSE.x + x1, z0: HOUSE.z + z0, z1: HOUSE.z + z1 }, extra));
+{
+  const w = HOUSE.w / 2, d = HOUSE.d / 2;
+  houseBox(-w, w, d - HW, d); houseBox(-w, -w + HW, -d, d); houseBox(w - HW, w, -d, d);
+  houseBox(-w, HOUSE_DOOR[0], -d, -d + HW); houseBox(HOUSE_DOOR[1], w, -d, -d + HW);
+  // mowers and robots don't fit through the door, so the third-person camera never ends up inside walls
+  houseBox(HOUSE_DOOR[0], HOUSE_DOOR[1], -d, -d + HW, { minRad: 0.45 });
+  houseBox(-1.9, 1.1, 0.6 - 0.68, 0.6 + 0.68); // roulette table
+}
 clearings.push({ box: true, x0: HOUSE.x - HOUSE.w / 2 - 0.5, x1: HOUSE.x + HOUSE.w / 2 + 0.5, z0: HOUSE.z - HOUSE.d / 2 - 0.5, z1: HOUSE.z + HOUSE.d / 2 + 0.5 });
 
 const trees = [], rocks = [], pillars = [];
@@ -1090,13 +1101,28 @@ const signMesh = (lines, w, h, bg, fg) => new THREE.Mesh(new THREE.PlaneGeometry
 const windowMat = lam(0x9fd2ff, { emissive: 0xffc070, emissiveIntensity: 0.2 });
 const lampMat = new THREE.MeshBasicMaterial({ color: 0x777766 });
 {
-  const g = new THREE.Group();
-  const walls = new THREE.Mesh(new THREE.BoxGeometry(HOUSE.w, 3, HOUSE.d), lam(0xdfe6ea)); walls.position.y = 1.5; g.add(walls);
+  const g = new THREE.Group(), wallMat = lam(0xdfe6ea), w = HOUSE.w / 2, d = HOUSE.d / 2;
+  const box = (sx, sy, sz, x, y, z, m = wallMat) => { const b = new THREE.Mesh(new THREE.BoxGeometry(sx, sy, sz), m); b.position.set(x, y, z); g.add(b); return b; };
+  box(HOUSE.w, 3, HW, 0, 1.5, d - HW / 2); box(HW, 3, HOUSE.d - 2 * HW, -w + HW / 2, 1.5, 0); box(HW, 3, HOUSE.d - 2 * HW, w - HW / 2, 1.5, 0);
+  const [d0, d1] = HOUSE_DOOR;
+  box(d0 + w, 3, HW, (-w + d0) / 2, 1.5, -d + HW / 2); box(w - d1, 3, HW, (d1 + w) / 2, 1.5, -d + HW / 2);
+  box(d1 - d0, 0.8, HW, (d0 + d1) / 2, 2.6, -d + HW / 2); // over the doorway
+  const trim = lam(0x5a3a26);
+  for (const x of [d0, d1]) box(0.08, 2.2, HW + 0.06, x, 1.1, -d + HW / 2, trim);
+  box(d1 - d0 + 0.08, 0.08, HW + 0.06, (d0 + d1) / 2, 2.2, -d + HW / 2, trim);
+  for (const x of [-1.8, -0.4]) box(1.1, 0.9, HW + 0.06, x, 1.8, -d + HW / 2, windowMat);
+  for (const z of [-1, 1.2]) { box(HW + 0.06, 0.9, 1.1, -w + HW / 2, 1.8, z, windowMat); box(HW + 0.06, 0.9, 1.1, w - HW / 2, 1.8, z, windowMat); }
+  const floor = box(HOUSE.w - 2 * HW, 0.04, HOUSE.d - 2 * HW, 0, 0.02, 0, lam(0x9a6b42));
+  const rug = box(4.2, 0.02, 2.6, -0.4, 0.05, 0.6, lam(0x7a2430));
+  const ceiling = box(HOUSE.w, 0.12, HOUSE.d, 0, 3.0, 0, lam(0xf3ede0));
   const roof = new THREE.Mesh(new THREE.ConeGeometry(1, 1, 4), lam(0xb8473a)); roof.rotation.y = Math.PI / 4; roof.scale.set(HOUSE.w * 0.78, 2.4, HOUSE.d * 0.78); roof.position.y = 4.2; g.add(roof);
-  const door = new THREE.Mesh(new THREE.BoxGeometry(1.1, 2, 0.1), lam(0x5a3a26)); door.position.set(1.2, 1, -HOUSE.d / 2 - 0.02); g.add(door);
-  for (const x of [-1.8, -0.2]) { const w = new THREE.Mesh(new THREE.BoxGeometry(1.1, 0.9, 0.08), windowMat); w.position.set(x, 1.8, -HOUSE.d / 2 - 0.02); g.add(w); }
-  const porch = new THREE.Mesh(new THREE.BoxGeometry(3, 0.15, 1.4), lam(0x8a6a4a)); porch.position.set(1.2, 0.07, -HOUSE.d / 2 - 0.7); g.add(porch);
+  const porch = box(3, 0.15, 1.4, (d0 + d1) / 2, 0.07, -d - 0.7, lam(0x8a6a4a));
+  box(1.1, 0.03, 0.7, (d0 + d1) / 2, 0.05, -d + 0.6, lam(0x3d6b2a)); // doormat
   g.position.set(HOUSE.x, 0, HOUSE.z); castsShadow(addOutlines(g, 0.05)); scene.add(g);
+  // sunlight comes in through the roof, so the room isn't a dark box
+  roof.castShadow = ceiling.castShadow = false; floor.castShadow = rug.castShadow = false;
+  // thin walls shadowing themselves draw stripes, so they only cast
+  g.traverse(o => { if (o.isMesh && o !== floor && o !== rug) o.receiveShadow = false; });
 }
 const ringMat = c => new THREE.MeshBasicMaterial({ color: c, transparent: true, opacity: 0.85, side: THREE.DoubleSide });
 function buildDepot(d) {
@@ -1351,6 +1377,194 @@ function sackMesh() {
 const sackMeshes = new WeakMap();
 function spawnSackMesh(s) { const m = sackMesh(); m.position.set(s.x, 0, s.z); m.rotation.y = (s.x * 7 + s.z * 3) % 6.28; scene.add(m); sackMeshes.set(s, m); }
 function removeSackMesh(s) { const m = sackMeshes.get(s); if (m) scene.remove(m); sackMeshes.delete(s); }
+// ===================== ROULETTE (inside the house) =====================
+// Put bags of grass on red, black or green, then spin. A European wheel: 18 red, 18 black, one green zero.
+// Red and black pay 2x the bag's cash value, green pays 36x. In co-op the host spins for everyone, so nobody can fake a win.
+const WHEEL = [0, 32, 15, 19, 4, 21, 2, 25, 17, 34, 6, 27, 13, 36, 11, 30, 8, 23, 10, 5, 24, 16, 33, 1, 20, 14, 31, 9, 22, 18, 29, 7, 28, 12, 35, 3, 26];
+const REDS = new Set([1, 3, 5, 7, 9, 12, 14, 16, 18, 19, 21, 23, 25, 27, 30, 32, 34, 36]);
+const RL_PAY = { red: 2, black: 2, green: 36 }, RL_NAME = { red: 'Red', black: 'Black', green: 'Green' };
+const pocketColor = n => n === 0 ? 'green' : REDS.has(n) ? 'red' : 'black';
+const SEG = Math.PI * 2 / 37, TAU = Math.PI * 2;
+const RL = { H: 0.85, cx: HOUSE.x - 0.4, cz: HOUSE.z + 0.6, wx: HOUSE.x - 1.3, wr: 0.45 };
+RL.areas = [['red', -0.65, -0.1], ['green', -0.07, 0.48], ['black', 0.51, 1.06]].map(([c, a, b]) =>
+  ({ c, x0: HOUSE.x + a, x1: HOUSE.x + b, z0: RL.cz - 0.48, z1: RL.cz + 0.48, x: HOUSE.x + (a + b) / 2, z: RL.cz }));
+const rlSpinNumber = () => { const u = new Uint32Array(1); crypto.getRandomValues(u); return u[0] % 37; };
+const RLS = { phase: 'idle', w: 0, b: 0, r: 0.41, t: 0, w0: 0, b0: 0, W: 0, B: 0, n: -1, paid: 0, stake: 0, bets: [], wait: 0, tick: 0, shown: '' };
+let rlWheel, rlBall, rlHi, rlSacks = [];
+{
+  const g = new THREE.Group(), wood = lam(0x6b3f22), gold = lam(0xd9b04a), H = RL.H;
+  const box = (sx, sy, sz, x, y, z, m) => { const b = new THREE.Mesh(new THREE.BoxGeometry(sx, sy, sz), m); b.position.set(x, y, z); g.add(b); return b; };
+  box(3.12, 0.12, 1.42, RL.cx, H - 0.09, RL.cz, wood);
+  box(3.0, 0.1, 1.3, RL.cx, H - 0.05, RL.cz, lam(0x1f7a3a));
+  for (const [x, z] of [[-1.35, -0.5], [1.35, -0.5], [-1.35, 0.5], [1.35, 0.5]]) box(0.12, H - 0.12, 0.12, RL.cx + x, (H - 0.12) / 2, RL.cz + z, wood);
+  // the betting layout
+  const cv = document.createElement('canvas'); cv.width = 680; cv.height = 400;
+  const x = cv.getContext('2d'); x.fillStyle = '#1f7a3a'; x.fillRect(0, 0, 680, 400);
+  const fill = { red: '#c62a2a', green: '#25a04f', black: '#1b1b1b' };
+  RL.areas.forEach(a => {
+    const px0 = (HOUSE.x + 1.06 - a.x1) / 1.71 * 680, px1 = (HOUSE.x + 1.06 - a.x0) / 1.71 * 680;
+    x.fillStyle = fill[a.c]; x.fillRect(px0, 16, px1 - px0, 368);
+    x.strokeStyle = '#f2e3c0'; x.lineWidth = 6; x.strokeRect(px0, 16, px1 - px0, 368);
+    x.fillStyle = '#f2e3c0'; x.textAlign = 'center'; x.textBaseline = 'middle';
+    x.font = '900 40px "Bungee", Impact, sans-serif'; x.fillText(a.c.toUpperCase(), (px0 + px1) / 2, 170);
+    x.font = '700 34px sans-serif'; x.fillText(`pays ${RL_PAY[a.c]}×`, (px0 + px1) / 2, 236);
+  });
+  const lt = new THREE.CanvasTexture(cv); lt.colorSpace = THREE.SRGBColorSpace; lt.anisotropy = 4;
+  const layout = new THREE.Mesh(new THREE.PlaneGeometry(1.71, 1.0), lam(0xffffff, { map: lt })); layout.rotation.set(-Math.PI / 2, 0, Math.PI);
+  layout.position.set(HOUSE.x - 0.65 + 0.855, H + 0.004, RL.cz); layout.userData.noInk = true; g.add(layout);
+  rlHi = new THREE.Mesh(new THREE.PlaneGeometry(1, 1), new THREE.MeshBasicMaterial({ color: 0xffffff, transparent: true, opacity: 0.22, depthWrite: false }));
+  rlHi.rotation.x = -Math.PI / 2; rlHi.visible = false; g.add(rlHi);
+  // the wheel: a bowl, a spinning disc painted with the 37 pockets, and the ball
+  const bowl = new THREE.Mesh(new THREE.CylinderGeometry(0.56, 0.5, 0.14, 40), wood); bowl.position.set(RL.wx, H + 0.07, RL.cz); g.add(bowl);
+  const wc = document.createElement('canvas'); wc.width = wc.height = 512;
+  const q = wc.getContext('2d'), c = 256, R = 254;
+  q.fillStyle = '#d9b04a'; q.beginPath(); q.arc(c, c, R, 0, TAU); q.fill();
+  WHEEL.forEach((n, k) => {
+    const a = k * SEG;
+    q.fillStyle = fill[pocketColor(n)]; q.beginPath(); q.moveTo(c, c); q.arc(c, c, R * 0.96, a - SEG / 2, a + SEG / 2); q.closePath(); q.fill();
+    q.save(); q.translate(c, c); q.rotate(a);
+    q.strokeStyle = '#d9b04a'; q.lineWidth = 3; q.beginPath(); q.moveTo(R * 0.55 * Math.cos(SEG / 2), R * 0.55 * Math.sin(SEG / 2)); q.lineTo(R * 0.96 * Math.cos(SEG / 2), R * 0.96 * Math.sin(SEG / 2)); q.stroke();
+    q.rotate(Math.PI / 2); q.fillStyle = '#ffffff'; q.font = 'bold 21px sans-serif'; q.textAlign = 'center'; q.textBaseline = 'middle'; q.fillText(String(n), 0, -R * 0.87);
+    q.restore();
+  });
+  q.fillStyle = '#5a3518'; q.beginPath(); q.arc(c, c, R * 0.55, 0, TAU); q.fill();
+  q.strokeStyle = '#d9b04a'; q.lineWidth = 8; q.beginPath(); q.arc(c, c, R * 0.55, 0, TAU); q.stroke();
+  const wt = new THREE.CanvasTexture(wc); wt.colorSpace = THREE.SRGBColorSpace; wt.anisotropy = 4;
+  rlWheel = new THREE.Group(); rlWheel.position.set(RL.wx, H + 0.15, RL.cz); g.add(rlWheel);
+  const disc = new THREE.Mesh(new THREE.CylinderGeometry(RL.wr, RL.wr, 0.04, 74), [gold, lam(0xffffff, { map: wt }), gold]); rlWheel.add(disc);
+  const hub = new THREE.Mesh(new THREE.CylinderGeometry(0.03, 0.07, 0.1, 12), gold); hub.position.y = 0.06; rlWheel.add(hub);
+  for (const r of [0, Math.PI / 2]) { const arm = new THREE.Mesh(new THREE.BoxGeometry(0.2, 0.02, 0.02), gold); arm.position.y = 0.1; arm.rotation.y = r; rlWheel.add(arm); }
+  rlBall = new THREE.Mesh(new THREE.SphereGeometry(0.028, 12, 8), lam(0xffffff)); rlBall.userData.noInk = true; rlWheel.add(rlBall);
+  // a sign and a lamp over the table
+  const sign = signMesh(['ROULETTE', 'red / black 2× · green 36×'], 2.0, 0.75, '#2b1d10', '#ffcf33'); sign.position.set(RL.cx, 2.1, HOUSE.z + HOUSE.d / 2 - HW - 0.02); sign.rotation.y = Math.PI; g.add(sign);
+  const shade = new THREE.Mesh(new THREE.ConeGeometry(0.35, 0.3, 16, 1, true), new THREE.MeshBasicMaterial({ color: 0x2f5a2a, side: THREE.DoubleSide })); shade.position.set(RL.cx + 0.3, 2.35, RL.cz); g.add(shade);
+  const bulb = new THREE.Mesh(new THREE.SphereGeometry(0.09, 10, 8), new THREE.MeshBasicMaterial({ color: 0xfff1b0 })); bulb.position.set(RL.cx + 0.3, 2.24, RL.cz); g.add(bulb);
+  const cord = new THREE.Mesh(new THREE.CylinderGeometry(0.01, 0.01, 0.5, 4), lampMat); cord.position.set(RL.cx + 0.3, 2.75, RL.cz); g.add(cord);
+  castsShadow(addOutlines(g, 0.02)); scene.add(g);
+  layout.castShadow = rlHi.castShadow = false;
+}
+function rlPlaceBall() {
+  const y = 0.035 + RLS.hop;
+  rlBall.position.set(RLS.r * Math.sin(RLS.b), y, RLS.r * Math.cos(RLS.b));
+  rlWheel.rotation.y = RLS.w;
+}
+RLS.hop = 0; RLS.b = 0; RLS.r = 0.32; rlPlaceBall();
+// which colour the crosshair is on, if it's on the table
+function rlAim() {
+  const dy = Math.sin(P.pitch), cp = Math.cos(P.pitch); if (dy > -0.05) return null;
+  const t = (RL.H - 1.65) / dy, hx = P.x - Math.sin(P.yaw) * cp * t, hz = P.z - Math.cos(P.yaw) * cp * t;
+  if (Math.hypot(hx - P.x, hz - P.z) > 3) return null;
+  return RL.areas.find(a => hx > a.x0 - 0.05 && hx < a.x1 + 0.05 && hz > a.z0 - 0.05 && hz < a.z1 + 0.05) || null;
+}
+const rlNear = () => !thirdPerson() && Math.abs(P.x - RL.cx) < 3.1 && Math.abs(P.z - RL.cz) < 2.3 && Math.abs(P.x - HOUSE.x) < HOUSE.w / 2 && Math.abs(P.z - HOUSE.z) < HOUSE.d / 2;
+const rlCash = v => v * sellMult();
+// B bets the bag you're wearing, G the bags in your arms; returns true when it handled the key
+function rlBet(fromArms) {
+  if (RLS.phase !== 'idle') { toast('No more bets · wait for the ball to land', 'warn', 1.6); return true; }
+  if (fromArms ? !S.carry.length : !S.bag) { toast('Your bag is empty', '', 1.2); return true; }
+  const a = rlAim();
+  if (!a) { toast('Aim at red, green or black on the table to bet there', 'warn', 1.8); return true; }
+  let n, v;
+  if (fromArms) { n = S.carry.reduce((t, c) => t + c.n, 0); v = carryValue(); S.carry = []; syncTool(); }
+  else { n = S.bag; v = S.bagValue; S.bag = 0; S.bagValue = 0; }
+  const b = S.bets.find(o => o.c === a.c);
+  if (b) { b.n += n; b.v += v; } else S.bets.push({ c: a.c, n, v });
+  thudSound(); toast(`${fmt(rlCash(v))} on ${RL_NAME[a.c]}`, 'good', 1.4); save();
+  return true;
+}
+function rlSpin() {
+  if (RLS.phase !== 'idle') { toast('The wheel is already spinning', '', 1.2); return; }
+  if (!S.bets.length) { toast('Put a bag on red, green or black first', 'warn', 1.6); return; }
+  RLS.bets = S.bets.map(b => ({ c: b.c, n: b.n, v: b.v, cash: rlCash(b.v) })); S.bets = [];
+  RLS.stake = RLS.bets.reduce((a, b) => a + b.cash, 0);
+  RLS.r = 0.41; RLS.hop = 0; RLS.tick = 0;
+  buySound();
+  if (NET.coop && !NET.isHost) {
+    // the host spins and pays; we keep the ball going round until the answer comes back
+    RLS.phase = 'wait'; RLS.wait = 0;
+    const rq = ++NET.reqSeq; NET.pending.set(rq, { k: 'bet' }); RLS.rq = rq;
+    netSend('req', { k: 'bet', b: RLS.bets.map(b => ({ c: b.c, v: +b.cash.toFixed(4) })), rq, to: NET.hostId });
+  } else {
+    const n = rlSpinNumber();
+    rlSettle(n, RLS.bets.reduce((a, b) => a + (b.c === pocketColor(n) ? b.cash * RL_PAY[b.c] : 0), 0), true);
+  }
+  save();
+}
+// from now on the ball slows down and drops into pocket n
+function rlSettle(n, paid, local) {
+  const target = -WHEEL.indexOf(n) * SEG, d = (((target - RLS.b) % TAU) + TAU) % TAU;
+  Object.assign(RLS, { phase: 'settle', n, paid, local, t: 0, w0: RLS.w, b0: RLS.b, W: TAU * 1.25, B: d - TAU * 6 });
+}
+function rlLand() {
+  const n = RLS.n, col = pocketColor(n), paid = RLS.paid;
+  if (RLS.local && paid > 0) earn(paid);
+  if (paid >= 0.005) { floaty('+' + fmt(paid)); col === 'green' ? fanfare() : sellSound(); toast(`${n} ${RL_NAME[col]}! You won ${fmt(paid)}`, 'good', 3.5); }
+  else { denySound(); toast(`${n} ${RL_NAME[col]} · the house keeps ${fmt(RLS.stake)}`, 'warn', 3); }
+  RLS.phase = 'done'; RLS.t = 0; RLS.bets = []; save();
+}
+// the co-op host spins for a guest: their stake comes out of the ledger of grass they were seen cutting
+function hostSpin(d, from) {
+  const bets = (Array.isArray(d.b) ? d.b : []).slice(0, 3).filter(b => RL_PAY[b?.c] && +b.v > 0).map(b => ({ c: b.c, v: claimPool(+b.v) }));
+  const n = rlSpinNumber(), paid = bets.reduce((a, b) => a + (b.c === pocketColor(n) ? b.v * RL_PAY[b.c] : 0), 0);
+  S.money += paid; S.stats.earned += paid;
+  netSend('ack', { to: from, rq: d.rq, spin: n, paid });
+}
+function rlHostAnswered(d) {
+  if (RLS.phase !== 'wait' || d.rq !== RLS.rq) return;
+  rlSettle(d.spin, Math.max(0, +d.paid || 0), false);
+}
+function updateRoulette(dt) {
+  if (RLS.phase === 'wait') {
+    RLS.w += dt * 2.2; RLS.b -= dt * 7; RLS.wait += dt;
+    if (RLS.wait > 7) {
+      // no answer from the host: the bags go back on the table
+      for (const b of RLS.bets) { const o = S.bets.find(x => x.c === b.c); if (o) { o.n += b.n; o.v += b.v; } else S.bets.push({ c: b.c, n: b.n, v: b.v }); }
+      NET.pending.delete(RLS.rq); RLS.bets = []; RLS.phase = 'idle';
+      toast('The host didn\'t answer · your bags are back on the table', 'warn', 2.5);
+    }
+  } else if (RLS.phase === 'settle') {
+    RLS.t += dt;
+    const x = Math.min(1, RLS.t / 4.6), e = 1 - (1 - x) ** 3;
+    RLS.w = RLS.w0 + RLS.W * e; RLS.b = RLS.b0 + RLS.B * e;
+    // the ball rides the rim, then drops in and bounces between pockets before it settles
+    RLS.r = x < 0.5 ? 0.41 : x < 0.75 ? 0.41 - (x - 0.5) / 0.25 * 0.09 : 0.32;
+    RLS.hop = x > 0.5 && x < 0.85 ? Math.abs(Math.sin(x * 46)) * 0.03 * (0.85 - x) / 0.35 : 0;
+    const k = Math.floor(RLS.b / SEG);
+    if (k !== RLS.tick && x > 0.45 && x < 0.95) { RLS.tick = k; blip(1800 + Math.random() * 300, 0.03, 'square', 0.05); }
+    if (x >= 1) rlLand();
+  } else if (RLS.phase === 'done') {
+    RLS.t += dt; if (RLS.t > 2) RLS.phase = 'idle';
+  }
+  if (RLS.phase === 'wait' || RLS.phase === 'settle' || RLS.phase === 'done') rlPlaceBall();
+  // bags on the table: one per colour you've bet on (the ones riding on this spin stay until the ball lands)
+  const show = RLS.bets.length ? RLS.bets : S.bets, key = show.map(b => b.c + b.n).join();
+  if (key !== RLS.shown) {
+    RLS.shown = key;
+    for (const m of rlSacks) scene.remove(m);
+    rlSacks = show.map(b => {
+      const a = RL.areas.find(o => o.c === b.c), m = sackMesh(), sc = Math.min(0.75, 0.42 + b.n / 4000);
+      m.scale.setScalar(sc); m.position.set(a.x, RL.H, a.z); m.rotation.y = a.x * 3; scene.add(m); return m;
+    });
+  }
+  // light up the colour you're aiming at
+  const a = state === 'play' && RLS.phase === 'idle' && (S.bag || S.carry.length) && rlNear() ? rlAim() : null;
+  rlHi.visible = !!a;
+  if (a) { rlHi.position.set(a.x, RL.H + 0.008, a.z); rlHi.scale.set(a.x1 - a.x0, a.z1 - a.z0, 1); }
+}
+function rlPrompt() {
+  const kb = isTouch ? 'BAG' : 'B', kg = isTouch ? 'DROP' : 'G', ke = isTouch ? 'USE' : 'E';
+  if (RLS.phase === 'wait' || RLS.phase === 'settle') return `<div class="pill">No more bets · ${fmt(RLS.stake)} riding on this spin</div>`;
+  if (RLS.phase === 'done') return '';
+  const a = rlAim(), lines = [];
+  if (a) {
+    if (S.bag) lines.push(`<kbd>${kb}</kbd> Bet your bag on ${RL_NAME[a.c]} (${fmt(rlCash(S.bagValue))})`);
+    if (S.carry.length) lines.push(`<kbd>${kg}</kbd> Bet the bags in your arms on ${RL_NAME[a.c]} (${fmt(rlCash(carryValue()))})`);
+  } else if (S.bag || S.carry.length) lines.push('Aim at red, green or black on the table to bet');
+  if (S.bets.length) lines.push(`<kbd>${ke}</kbd> Spin · ${S.bets.map(b => `${RL_NAME[b.c]} ${fmt(rlCash(b.v))}`).join(', ')}`);
+  else if (!lines.length) lines.push('Bring bags of grass to bet on red, green or black');
+  return lines.map(l => `<div class="pill">${l}</div>`).join('');
+}
+
 // in a co-op lobby bags on the ground are shared, so drops and pick-ups are broadcast
 function addSack(s, remote = false) {
   s.id = s.id || Math.random().toString(36).slice(2, 10);
@@ -1620,6 +1834,7 @@ function pushOut(x, z, rad) {
       const d = Math.hypot(dx, dz), m = c.r + rad;
       if (d < m && d > 1e-4) { x = c.x + dx / d * m; z = c.z + dz / d * m; }
     } else {
+      if (c.minRad && rad < c.minRad) continue;
       const nx = Math.max(c.x0, Math.min(c.x1, x)), nz = Math.max(c.z0, Math.min(c.z1, z));
       const dx = x - nx, dz = z - nz, d = Math.hypot(dx, dz);
       if (d < rad) {
@@ -2019,6 +2234,7 @@ function dropHeld() {
   S.held = null; spawnToolMesh(id); thudSound(); syncTool();
 }
 function putDown() {
+  if (S.carry.length && rlNear()) { rlBet(true); return; }
   if (S.carry.length) {
     if (!canDropSack()) return;
     // everything in your arms goes down as one bag
@@ -2046,6 +2262,7 @@ function canDropSack() {
   return true;
 }
 function dropBag() {
+  if (rlNear()) { rlBet(false); return; }
   if (!S.bag) { toast('Your bag is empty', '', 1.2); return; }
   if (S.bag < MIN_DROP) { toast(`Too little to bag up · cut at least ${MIN_DROP} clippings first`, 'warn', 1.6); return; }
   if (!canDropSack()) return;
@@ -2066,6 +2283,7 @@ function nearestInteract() {
   return best;
 }
 function useAction() {
+  if (rlNear() && (S.bets.length || RLS.phase !== 'idle')) { rlSpin(); return; }
   const it = nearestInteract();
   if (it?.type === 'tool') { pickUpTool(it.id); return; }
   if (it?.type === 'sack') {
@@ -2743,6 +2961,7 @@ function wireNet(tx0) {
   tx.on('req', (d, from) => {
     if (!NET.isHost || !NET.coop || !d || (d.to && d.to !== NET.selfId) || !rateOk(from, 5)) return;
     if (d.k === 'earn') { const v = claimPool(+d.v > 0 ? +d.v : 0); S.money += v; S.stats.earned += v; return; }
+    if (d.k === 'bet') { hostSpin(d, from); return; }
     if (d.k === 'shop') {
       const ok = econAct(d.act, d.id);
       if (ok) afterShop(d.act, d.id, false);
@@ -2753,6 +2972,7 @@ function wireNet(tx0) {
   tx.on('ack', (d, from) => {
     if (!d || d.to !== NET.selfId || from !== NET.hostId || !NET.pending.has(d.rq)) return;
     NET.pending.delete(d.rq);
+    if (Number.isInteger(d.spin) && d.spin >= 0 && d.spin <= 36) { rlHostAnswered(d); return; }
     if (d.ok) { isSale(d.act) ? sellSound() : buySound(); afterShop(d.act, d.id, true); }
     else { denySound(); toast('The shared wallet couldn\'t cover that', 'warn'); }
   });
@@ -3095,8 +3315,10 @@ function frame(now) {
     if (it?.type === 'tool') { const t = toolDef(it.id); prompt = `${t.kind === 'ride' ? 'Get on the' : 'Pick up the'} ${t.name}`; }
     else if (it?.type === 'sack') prompt = S.bag < bagCap() ? `Add bag to yours (${fmt(it.s.v * sellMult())})` : `Pick up bag (${fmt(it.s.v * sellMult())})`;
     else if (onPad) prompt = 'Open shop';
-    $('prompt').hidden = !prompt || shopOpen;
-    if (prompt) setText('prompt', `<div class="pill"><kbd>${isTouch ? 'USE' : 'E'}</kbd> ${prompt}</div>`);
+    const rp = rlNear() ? rlPrompt() : '';
+    $('prompt').hidden = !(prompt || rp) || shopOpen;
+    if (rp) setText('prompt', rp);
+    else if (prompt) setText('prompt', `<div class="pill"><kbd>${isTouch ? 'USE' : 'E'}</kbd> ${prompt}</div>`);
     huntTimer -= dt; if (huntTimer <= 0) { huntTimer = 0.6; findHunt(); }
     if (guide && timeU.value > guide.until) guide = null;
     if (guide) showCompass(guide.x, guide.z, `${guide.label} · ${Math.round(Math.hypot(guide.x - P.x, guide.z - P.z))} m`);
@@ -3127,6 +3349,7 @@ function frame(now) {
     headlight.target.position.set(P.x + fx * 7, 0, P.z + fz * 7);
   }
   updateParts(dt);
+  updateRoulette(dt);
   flushDirty();
   updateLOD(dt);
   updateAudio(cutting, P.moving);
