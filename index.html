@@ -501,7 +501,7 @@ const HOUSE = { x: -9, z: 6, w: 7, d: 6 };
 const SAVE_KEY = 'cutabove_save_v3';
 const fresh = () => ({ money: 0, owned: { scissors: true }, pocket: 'scissors', held: null, toolAt: {}, carry: [], sacks: [], tool: 'scissors',
   up: { bag: 0, arms: 0, shoes: 0, buyer: 0, blades: 0, deck: 0, tune: 0 }, robots: [], outposts: OUTPOSTS.map(() => false),
-  stats: { cut: 0, earned: 0, time: 0 }, bag: 0, bagValue: 0, muted: false, ach: {}, cutBits: '', gridSig: '', won: false, px: 0, pz: 3, yaw: null, dayT: 0.3, upTier: 1, bets: [], beaten: [false, false, false, false, false, false, false], wipes: [0, 0, 0, 0, 0, 0, 0] });
+  stats: { cut: 0, earned: 0, time: 0 }, bag: 0, bagValue: 0, muted: false, ach: {}, cutBits: '', gridSig: '', won: false, px: 0, pz: 3, yaw: null, dayT: 0.3, upTier: 1, bets: [], beaten: [false, false, false, false, false, false, false], wipes: [0, 0, 0, 0, 0, 0, 0], met: [false, false, false, false, false, false, false] });
 let S = fresh();
 function loadInto(data) {
   if (!data) return;
@@ -515,6 +515,7 @@ function loadInto(data) {
   S.carry = Array.isArray(data.carry) ? data.carry : [];
   S.sacks = Array.isArray(data.sacks) ? data.sacks.filter(s => isFinite(s.x) && isFinite(s.z)) : [];
   S.beaten = f.beaten.map((v, t) => !!(Array.isArray(data.beaten) && data.beaten[t]));
+  S.met = f.met.map((v, t) => !!(Array.isArray(data.met) && data.met[t]) || S.beaten[t]);
   S.wipes = f.wipes.map((v, t) => Array.isArray(data.wipes) ? Math.max(0, +data.wipes[t] || 0) : 0);
   S.bets = Array.isArray(data.bets) ? data.bets.filter(b => ['red', 'black', 'green'].includes(b?.c) && b.v > 0 && b.n > 0).slice(0, 3) : [];
   if (!Array.isArray(S.outposts) || S.outposts.length !== OUTPOSTS.length) S.outposts = f.outposts;
@@ -1793,6 +1794,7 @@ function spawnBoss(t) {
 }
 function bossAnnounce() {
   const B = BOSSES[BOSS.t];
+  S.met[BOSS.t] = true;
   roarSound();
   toast(`A ${B.name} has appeared in the ${TIERS[BOSS.t].zone}! Beat it to finish mowing there`, 'stop', 5);
   guide = { x: BOSS.x, z: BOSS.z, label: B.name, until: timeU.value + 12 };
@@ -1963,7 +1965,7 @@ function updateBoss(dt) {
   PL.flash = Math.max(0, PL.flash - dt * 1.8);
   setStyle('hurt', 'opacity', PL.flash.toFixed(2));
   const engaged = bossEngaged();
-  $('hpWrap').hidden = !(engaged || PL.hp < PL.max) || PL.ko;
+  $('hpWrap').hidden = !bossAlive() || !(engaged || PL.hp < PL.max) || PL.ko;
   setStyle('hpFill', 'width', (PL.hp / PL.max * 100).toFixed(1) + '%');
   $('bossBar').hidden = !engaged;
   if (document.body.classList.contains('bossOn') !== engaged) document.body.classList.toggle('bossOn', engaged);
@@ -3817,7 +3819,7 @@ function frame(now) {
     if (onPad && S.held && (S.bag || S.carry.length)) setStatus(`Put down the ${toolDef(S.held).name} (G) to cash in`, 'warn');
     else if (handsFull) setStatus(`Carrying ${S.carry.length} bag${S.carry.length > 1 ? 's' : ''} · walk onto a drop-off pad, or G to set them down`, '');
     else if (full) setStatus(S.held ? `Bag full · B to drop it here, or put down the ${toolDef(S.held).name} (G) and carry it in` : 'Bag full · B to drop it here, or walk it to a drop-off', 'stop');
-    else if (res.locked && !res.any && !res.tough) setStatus(`The ${BOSSES[res.locked].name} guards the rest of the ${TIERS[res.locked].zone} · beat it to keep mowing`, 'stop');
+    else if (res.locked && !res.any && !res.tough && bossAlive() && BOSS.t === res.locked) setStatus(`The ${BOSSES[res.locked].name} guards the rest of the ${TIERS[res.locked].zone} · beat it to keep mowing`, 'stop');
     else if (res.tough && !res.any) {
       const need = TOOLS.find(t => t.tier >= res.tough);
       setStatus(`${TIERS[res.tough].name} is too tough · needs a Tier ${res.tough} tool like the ${need.name}`, 'warn');
@@ -3922,7 +3924,7 @@ function pause() {
     const p = cutCount[t] / tierCount[t];
     return `<tr><td><span class="chip" style="display:inline-flex;gap:6px;align-items:center"><span class="swatch" style="background:${TIERS[t].color}"></span>${TIERS[t].zone}</span></td><td class="r">${Math.round(TIERS[t].area).toLocaleString('en-US')} m²</td><td class="r">${p >= 1 ? '✓ 100' : (p * 100).toFixed(1)}%</td><td class="r">${fmtRate(TIERS[t].perM2)}</td><td class="r">${fmt(TIERS[t].worth)}</td></tr>`;
   }).join('');
-  $('achList').innerHTML = ACHIEVEMENTS.map(a => `<div class="achItem ${S.ach[a.id] ? 'got' : ''}" title="${a.desc}"><svg viewBox="0 0 32 32">${S.ach[a.id] ? ICONS.medal : ICONS.medalOff}</svg>${a.name}</div>`).join('');
+  $('achList').innerHTML = ACHIEVEMENTS.filter(a => !a.id.startsWith('boss') || S.ach[a.id] || S.met[+a.id.slice(4)]).map(a => `<div class="achItem ${S.ach[a.id] ? 'got' : ''}" title="${a.desc}"><svg viewBox="0 0 32 32">${S.ach[a.id] ? ICONS.medal : ICONS.medalOff}</svg>${a.name}</div>`).join('');
   renderGraphicsRow(); showSens(); showPauseTab(pauseTab);
   $('pauseScreen').hidden = false;
 }
