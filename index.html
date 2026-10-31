@@ -1650,16 +1650,21 @@ function rlPrompt() {
 const BOSS_AT = 0.75;
 const lockAt = t => Math.ceil(BOSS_AT * tierCount[t]);
 const zoneLocked = t => !!t && !S.beaten[t] && cutCount[t] >= lockAt(t);
+// zones open one at a time: the next one opens only when this one's boss is beaten
+const openTier = () => { let t = 1; while (t < 6 && S.beaten[t]) t++; return t; };
+const closedMsg = t => `Finish the ${TIERS[t - 1].zone} to open the ${TIERS[t].zone}`;
 const BOSSES = [null,
-  { id: 'rat',    name: 'Giant Rat',        hp: 960,   dmg: 10, speed: 3.9, r: 0.8, reach: 1.1, special: null },
-  { id: 'dog',    name: 'Guard Dog',        hp: 2280,  dmg: 13, speed: 4.3, r: 0.9, reach: 1.2, special: 'charge' },
-  { id: 'bear',   name: 'Grizzly Bear',     hp: 6600,  dmg: 18, speed: 3.8, r: 1.3, reach: 1.6, special: 'slam' },
-  { id: 'lion',   name: 'Thorn Lion',       hp: 14400, dmg: 20, speed: 4.6, r: 1.2, reach: 1.6, special: 'charge' },
-  { id: 'croc',   name: 'Jungle Crocodile', hp: 36000, dmg: 24, speed: 3.6, r: 1.4, reach: 2.0, special: 'slam' },
-  { id: 'dragon', name: 'Crystal Dragon',   hp: 90000, dmg: 28, speed: 4.2, r: 1.9, reach: 2.4, special: 'breath' },
+  { id: 'rat',    name: 'Giant Rat',        hp: 960,   dmg: 16, speed: 4.5, r: 0.8, reach: 1.7, special: 'charge' },
+  { id: 'dog',    name: 'Guard Dog',        hp: 2280,  dmg: 21, speed: 4.9, r: 0.9, reach: 1.8, special: 'charge' },
+  { id: 'bear',   name: 'Grizzly Bear',     hp: 6600,  dmg: 29, speed: 4.4, r: 1.3, reach: 2.4, special: 'slam' },
+  { id: 'lion',   name: 'Thorn Lion',       hp: 14400, dmg: 32, speed: 5.3, r: 1.2, reach: 2.4, special: 'charge' },
+  { id: 'croc',   name: 'Jungle Crocodile', hp: 36000, dmg: 38, speed: 4.1, r: 1.4, reach: 3.0, special: 'slam' },
+  { id: 'dragon', name: 'Crystal Dragon',   hp: 90000, dmg: 45, speed: 4.8, r: 1.9, reach: 3.6, special: 'breath' },
 ];
-const WIND = { bite: 0.55, slam: 1.0, charge: 0.85, breath: 0.8 };
-const SLAM_R = t => BOSSES[t].r + 3.2, CHARGE_LEN = 13, BREATH_R = 9.5, BREATH_HALF = 0.5;
+// attacks wind up quickly but still give you a moment to dodge once the boss commits (halfway through)
+const WIND = { bite: 0.45, slam: 0.85, charge: 0.7, breath: 0.7 };
+const SLAM_R = t => BOSSES[t].r + 4.6, CHARGE_LEN = 17, BREATH_R = 13, BREATH_HALF = 0.62;
+const BITE_HALF = 1.5, SLAM_MUL = 1.8, CHARGE_MUL = 2, BREATH_MUL = 1.8;
 const PL = { hp: 100, max: 100, ko: false, hurtAt: -1e9, flash: 0 };
 const BOSS = { i: '', mul: 1, t: 0, x: 0, z: 0, dx: 0, dz: 0, yaw: 0, dyaw: 0, hp: 0, max: 0, st: 'none', stT: 0, atk: null, as: 0, sk: 0, mySk: 0, chargeHit: -1,
   cd: 3, cool: 2, idle: 0, wx: 0, wz: 0, hx: 0, hz: 0, wipeT: 0, flash: 0, hitAcc: 0, hitT: 0, hitSnd: 0, mesh: null, meshT: 0 };
@@ -1766,7 +1771,7 @@ function beastModel(t) {
 const telMat = new THREE.MeshBasicMaterial({ color: 0xff2a1a, transparent: true, opacity: 0.3, depthWrite: false, side: THREE.DoubleSide });
 const sectorGeo = half => { const g = new THREE.CircleGeometry(1, 32, Math.PI / 2 - half, half * 2); g.rotateX(-Math.PI / 2); return g; };
 const TEL = {
-  bite: new THREE.Mesh(sectorGeo(1.25), telMat), breath: new THREE.Mesh(sectorGeo(BREATH_HALF), telMat),
+  bite: new THREE.Mesh(sectorGeo(BITE_HALF), telMat), breath: new THREE.Mesh(sectorGeo(BREATH_HALF), telMat),
   slam: new THREE.Mesh((() => { const g = new THREE.CircleGeometry(1, 40); g.rotateX(-Math.PI / 2); return g; })(), telMat),
   charge: new THREE.Mesh((() => { const g = new THREE.PlaneGeometry(1, 1); g.rotateX(-Math.PI / 2); g.translate(0, 0, -0.5); return g; })(), telMat),
 };
@@ -1835,7 +1840,7 @@ function bossThink(dt) {
   const face = (x, z, rate) => { const want = Math.atan2(-(x - BOSS.x), -(z - BOSS.z)), dy = ((want - BOSS.yaw + Math.PI * 3) % TAU) - Math.PI; BOSS.yaw += Math.max(-rate * dt, Math.min(rate * dt, dy)); return Math.abs(dy); };
   const move = spd => { const p = pushOut(BOSS.x - Math.sin(BOSS.yaw) * spd * dt, BOSS.z - Math.cos(BOSS.yaw) * spd * dt, B.r); BOSS.x = p[0]; BOSS.z = p[1]; };
   const go = st => { BOSS.st = st; BOSS.stT = 0; };
-  const attack = type => { BOSS.as++; BOSS.atk = { type, x: BOSS.x, z: BOSS.z, yaw: BOSS.yaw }; if (type !== 'bite') BOSS.cd = 5 + Math.random() * 3; go('windup'); };
+  const attack = type => { BOSS.as++; BOSS.atk = { type, x: BOSS.x, z: BOSS.z, yaw: BOSS.yaw }; if (type !== 'bite') BOSS.cd = 3 + Math.random() * 2; go('windup'); };
   switch (BOSS.st) {
     case 'roam':
       if (tgt) { go('chase'); break; }
@@ -1863,8 +1868,8 @@ function bossThink(dt) {
       break;
     }
     case 'charge': move(CHARGE_LEN); if (BOSS.stT > 1) go('recover'); break;
-    case 'breath': if (BOSS.stT > 1.6) go('recover'); break;
-    case 'recover': if (BOSS.stT > (BOSS.atk?.type === 'bite' ? 0.45 : 0.9)) go('chase'); break;
+    case 'breath': if (BOSS.stT > 2) go('recover'); break;
+    case 'recover': if (BOSS.stT > (BOSS.atk?.type === 'bite' ? 0.3 : 0.6)) go('chase'); break;
   }
 }
 // what the host shares in its presence
@@ -1920,12 +1925,12 @@ function bossResolve(dt) {
   const inFront = half => { const a = Math.atan2(-dx, -dz), off = ((a - A.yaw + Math.PI * 3) % TAU) - Math.PI; return Math.abs(off) < half; };
   if (BOSS.sk !== BOSS.mySk) {
     BOSS.mySk = BOSS.sk;
-    if (A.type === 'bite' && d < B.reach + B.r + 0.4 && (inFront(1.25) || d < B.r + 0.4)) hurt(B.dmg);
+    if (A.type === 'bite' && d < B.reach + B.r + 0.4 && (inFront(BITE_HALF) || d < B.r + 0.4)) hurt(B.dmg);
     // jumping clears a slam's shockwave and a charge
-    if (A.type === 'slam') { if (d < SLAM_R(BOSS.t) && P.y < 0.5) hurt(B.dmg * 1.5); if (d < 40) { slamSound(); slamFx.position.x = A.x; slamFx.position.z = A.z; slamFx.userData.t = 0; } }
+    if (A.type === 'slam') { if (d < SLAM_R(BOSS.t) && P.y < 0.5) hurt(B.dmg * SLAM_MUL); if (d < 40) { slamSound(); slamFx.position.x = A.x; slamFx.position.z = A.z; slamFx.userData.t = 0; } }
   }
-  if (BOSS.st === 'charge' && BOSS.chargeHit !== BOSS.as && P.y < 0.5 && Math.hypot(P.x - BOSS.dx, P.z - BOSS.dz) < B.r * 1.15 + 1) { BOSS.chargeHit = BOSS.as; hurt(B.dmg * 1.6); }
-  if (BOSS.st === 'breath' && d < BREATH_R && inFront(BREATH_HALF)) hurt(B.dmg * 1.4 * dt, true);
+  if (BOSS.st === 'charge' && BOSS.chargeHit !== BOSS.as && P.y < 0.5 && Math.hypot(P.x - BOSS.dx, P.z - BOSS.dz) < B.r * 1.15 + 1.4) { BOSS.chargeHit = BOSS.as; hurt(B.dmg * CHARGE_MUL); }
+  if (BOSS.st === 'breath' && d < BREATH_R && inFront(BREATH_HALF)) hurt(B.dmg * BREATH_MUL * dt, true);
 }
 function applyBossWin(t) {
   if (S.beaten[t]) return;
@@ -2139,7 +2144,7 @@ function updateParts(dt) {
 let partBudget = 0;
 // cut a rectangle centred on (cx, cz), facing (fx, fz): hw across, hd along
 function cutAt(cx, cz, fx, fz, hw, hd, maxTier, power, dt, who) {
-  const res = { cut: 0, tough: 0, full: false, any: false };
+  const res = { cut: 0, tough: 0, full: false, any: false }, open = openTier();
   const r = Math.hypot(hw, hd);
   const x0 = Math.max(0, toCell(cx - r)), x1 = Math.min(N - 1, toCell(cx + r));
   const z0 = Math.max(0, toCell(cz - r)), z1 = Math.min(N - 1, toCell(cz + r));
@@ -2149,6 +2154,7 @@ function cutAt(cx, cz, fx, fz, hw, hd, maxTier, power, dt, who) {
     const dx = cellX(gx) - cx, dz = cellX(gz) - cz;
     if (Math.abs(dx * fx + dz * fz) > hd || Math.abs(dx * -fz + dz * fx) > hw) continue;
     const t = gTier[i];
+    if (t > open) { res.closed = t; continue; } // not open yet
     if (!S.beaten[t] && cutCount[t] >= lockAt(t)) { res.locked = t; continue; } // the zone's boss guards the rest
     if (t > maxTier) { res.tough = Math.max(res.tough, t); continue; }
     res.any = true;
@@ -2212,7 +2218,7 @@ function removeRobot(r) {
   for (const s of r.load) addSack({ x: r.x, z: r.z, n: s.n, v: s.v });
   robots.splice(robots.indexOf(r), 1);
 }
-const robotCan = (r, i) => gUncut[i] && gTier[i] <= r.model.tier && !claimed.has(i) && !zoneLocked(gTier[i]);
+const robotCan = (r, i) => gUncut[i] && gTier[i] <= r.model.tier && gTier[i] <= openTier() && !claimed.has(i) && !zoneLocked(gTier[i]);
 function findTarget(r) {
   const gx0 = toCell(r.x), gz0 = toCell(r.z);
   for (let rad = 1; rad <= 60; rad++) {
@@ -2887,7 +2893,7 @@ function showNextAch(dt) {
 function stuckInfo() {
   const best = Math.max(...TOOLS.filter(t => S.owned[t.id]).map(t => t.tier));
   const next = TOOLS.find(t => t.tier === best + 1);
-  if (!next) return null;
+  if (!next || next.tier > openTier()) return null; // the next zone isn't open yet anyway
   let reachable = S.bagValue + carryValue() + S.sacks.reduce((a, s) => a + s.v, 0) + robots.reduce((a, r) => a + r.load.reduce((b, s) => b + s.v, 0), 0);
   for (let t = 1; t <= best; t++) reachable += (tierCount[t] - cutCount[t]) * TIERS[t].value;
   const short = next.price - (S.money + reachable * sellMult());
@@ -2927,7 +2933,8 @@ function renderShop() {
     html = TOOLS.map(t => {
       const own = S.owned[t.id];
       let btn;
-      if (!own) btn = `<button class="buy" data-act="tool" data-id="${t.id}" ${S.money < t.price ? 'disabled' : ''}>${fmt(t.price)}</button>`;
+      if (!own && t.tier > openTier()) btn = `<button class="buy owned" disabled title="${closedMsg(t.tier)}">Locked</button>`;
+      else if (!own) btn = `<button class="buy" data-act="tool" data-id="${t.id}" ${S.money < t.price ? 'disabled' : ''}>${fmt(t.price)}</button>`;
       else if (t.pocket) btn = S.pocket === t.id ? `<button class="buy owned" disabled>In pocket</button>` : `<button class="buy equip" data-act="equip" data-id="${t.id}">Equip</button>`;
       else btn = S.held === t.id ? `<button class="buy owned" disabled>In hand</button>` : `<button class="buy equip" data-act="locate" data-id="${t.id}">Find · ${Math.round(toolDist(t.id))} m</button>`;
       return `<div class="item"><div class="ico">${icon(t.id)}</div><div><h3>${t.name}</h3><div class="meta"><span class="chip"><span class="swatch" style="background:${TIERS[t.tier].color}"></span>Cuts up to <b>${TIERS[t.tier].name}</b></span><span>Cut <b>${(t.hw * 2).toFixed(1)} × ${(t.hd * 2).toFixed(1)} m</b></span><span>Power <b>${t.power}</b></span>${t.speed > 1 ? `<span>Speed <b>×${t.speed}</b></span>` : ''}<span>${t.pocket ? 'Pocket tool' : t.kind === 'ride' ? 'Ride-on' : 'Big gear'}</span></div><div class="meta">${t.desc}</div></div><div class="btns">${btn}</div></div>`;
@@ -2954,7 +2961,7 @@ function renderShop() {
   } else {
     html = `<div class="meta" style="padding:0 4px 4px">A drop-off lets you cash in bags and shop out in the field. Each zone has four sites; unbuilt ones show a FOR SALE sign.</div>` + OUTPOSTS.map((o, k) => {
       const built = S.outposts[k], d = depots[k + 1];
-      const btn = built ? `<button class="buy owned" disabled>Built</button>` : `<button class="buy" data-act="outpost" data-id="${k}" ${S.money < o.price ? 'disabled' : ''}>${fmt(o.price)}</button>`;
+      const btn = built ? `<button class="buy owned" disabled>Built</button>` : o.tier > openTier() ? `<button class="buy owned" disabled title="${closedMsg(o.tier)}">Locked</button>` : `<button class="buy" data-act="outpost" data-id="${k}" ${S.money < o.price ? 'disabled' : ''}>${fmt(o.price)}</button>`;
       return `<div class="item"><div class="ico">${icon('outpost')}</div><div><h3>${o.name}</h3><div class="meta"><span class="chip"><span class="swatch" style="background:${TIERS[o.tier].color}"></span>In the <b>${TIERS[o.tier].zone}</b></span><span><b>${Math.round(Math.hypot(d.x - P.x, d.z - P.z))} m</b> from here</span></div></div><div class="btns">${btn}</div></div>`;
     }).join('');
   }
@@ -2973,10 +2980,10 @@ $('shopList').addEventListener('click', e => {
 // everything you buy is yours for good: nothing sells back
 function econAct(act, id) {
   const pay = c => { if (S.money < c) return false; S.money -= c; return true; };
-  if (act === 'tool') { const t = toolDef(id); return !!t && !S.owned[id] && pay(t.price) && (S.owned[id] = true); }
+  if (act === 'tool') { const t = toolDef(id); return !!t && !S.owned[id] && t.tier <= openTier() && pay(t.price) && (S.owned[id] = true); }
   if (act === 'up') { const u = UPGRADES.find(u => u.id === id); if (!u || S.up[id] >= Math.min(u.max, levelCap(u, upgradeTier())) || !pay(u.cost(S.up[id]))) return false; S.up[id]++; return true; }
   if (act === 'robot') { const r = ROBOTS.find(r => r.id === id); if (!r || S.robots.filter(x => x === id).length >= robotCap(r, upgradeTier()) || !pay(robotPrice(r))) return false; S.robots.push(id); return true; }
-  if (act === 'outpost') { const k = +id; if (!OUTPOSTS[k] || S.outposts[k] || !pay(OUTPOSTS[k].price)) return false; S.outposts[k] = true; return true; }
+  if (act === 'outpost') { const k = +id; if (!OUTPOSTS[k] || S.outposts[k] || OUTPOSTS[k].tier > openTier() || !pay(OUTPOSTS[k].price)) return false; S.outposts[k] = true; return true; }
   return false;
 }
 function cleanupTool(id) {
@@ -3583,7 +3590,7 @@ function coopMaxTier() {
   return t;
 }
 function cutPlausible(tp, pr, i, maxTier) {
-  if (i < 0 || i >= NC || !gTier[i] || gTier[i] > maxTier) return false;
+  if (i < 0 || i >= NC || !gTier[i] || gTier[i] > maxTier || gTier[i] > openTier()) return false;
   const x = cellX(i % N), z = cellX((i / N) | 0);
   if ((x - tp.x) ** 2 + (z - tp.z) ** 2 < 144) return true; // within 12 m of where they can really be (covers reach, deck size and lag)
   // with own wallets players run their own robots; in co-op the host runs them all, so robot positions from others mean nothing
@@ -4046,6 +4053,7 @@ function frame(now) {
     if (onPad && S.held && (S.bag || S.carry.length)) setStatus(`Put down the ${toolDef(S.held).name} (G) to cash in`, 'warn');
     else if (handsFull) setStatus(`Carrying ${S.carry.length} bag${S.carry.length > 1 ? 's' : ''} · walk onto a drop-off pad, or G to set them down`, '');
     else if (full) setStatus(S.held ? `Bag full · B to drop it here, or put down the ${toolDef(S.held).name} (G) and carry it in` : 'Bag full · B to drop it here, or walk it to a drop-off', 'stop');
+    else if (res.closed && !res.any) setStatus(closedMsg(res.closed), 'stop');
     else if (res.locked && !res.any && !res.tough && bossAlive() && BOSS.t === res.locked) setStatus(`The ${BOSSES[res.locked].name} guards the rest of the ${TIERS[res.locked].zone} · beat it to keep mowing`, 'stop');
     else if (res.tough && !res.any) {
       const need = TOOLS.find(t => t.tier >= res.tough);
