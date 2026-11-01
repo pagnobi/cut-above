@@ -1420,6 +1420,7 @@ function removeSackMesh(s) { const m = sackMeshes.get(s); if (m) scene.remove(m)
 // ===================== ROULETTE (inside the house) =====================
 // Put bags of grass on red, black or green, then spin. A European wheel: 18 red, 18 black, one green zero.
 // Red and black pay 2x the bag's cash value, green pays 36x. In co-op the host spins for everyone, so nobody can fake a win.
+// A winning bag stays on the table at its new value: spin again, or pick it up (E) and sell it on a pad.
 const WHEEL = [0, 32, 15, 19, 4, 21, 2, 25, 17, 34, 6, 27, 13, 36, 11, 30, 8, 23, 10, 5, 24, 16, 33, 1, 20, 14, 31, 9, 22, 18, 29, 7, 28, 12, 35, 3, 26];
 const REDS = new Set([1, 3, 5, 7, 9, 12, 14, 16, 18, 19, 21, 23, 25, 27, 30, 32, 34, 36]);
 const RL_PAY = { red: 2, black: 2, green: 36 }, RL_NAME = { red: 'Red', black: 'Black', green: 'Green' };
@@ -1512,6 +1513,16 @@ function rlBet(fromArms) {
   thudSound(); toast(`${fmt(rlCash(v))} on ${RL_NAME[a.c]}`, 'good', 1.4); save();
   return true;
 }
+// the bag of yours the crosshair is on, if any
+const rlMyBetAt = () => { if (RLS.phase !== 'idle') return null; const a = rlAim(); return a && S.bets.find(b => b.c === a.c) || null; };
+// pick a bag up off the table into your arms
+function rlTake(b) {
+  if (S.held) { toast(`Put down the ${toolDef(S.held).name} first (G)`, 'warn'); denySound(); return; }
+  if (S.carry.length >= carryMax()) { toast(`Your arms are full (${carryMax()} bag${carryMax() > 1 ? 's' : ''}) · Strong Arms lets you carry more`, 'warn'); denySound(); return; }
+  S.bets = S.bets.filter(o => o !== b);
+  S.carry.push({ n: b.n, v: b.v }); thudSound(); syncTool();
+  toast(`Picked up your bag from ${RL_NAME[b.c]} (${fmt(rlCash(b.v))})`, 'good', 1.6); save();
+}
 function rlSpin() {
   if (RLS.phase !== 'idle') { toast('The wheel is already spinning', '', 1.2); return; }
   if (!S.bets.length && !rlOthersBets().length) { toast('Put a bag on red, green or black first', 'warn', 1.6); return; }
@@ -1568,12 +1579,16 @@ function rlStart(n, bets) {
 const rlWinnings = (bets, col) => bets.reduce((a, b) => a + ((b.c || b[0]) === col ? (b.cash ?? b[2]) * RL_PAY[col] : 0), 0);
 function rlLand() {
   const n = RLS.n, col = pocketColor(n), won = rlWinnings(RLS.mine, col);
-  const others = RLS.others.map(o => ({ name: o.name, won: rlWinnings(o.bets, col) }));
-  // solo and own-wallet players pay themselves; in co-op the host pays everyone into the shared wallet
-  if (!NET.coop) { if (won > 0) earn(won); }
-  else if (NET.isHost) { const tot = won + others.reduce((a, o) => a + o.won, 0); if (tot > 0) { S.money += tot; S.stats.earned += tot; } }
+  const others = RLS.others.map(o => ({ id: o.id, name: o.name, won: rlWinnings(o.bets, col) }));
+  // a winning bag goes back on its colour, worth the payout; nothing goes into a wallet until it's sold
+  for (const m of RLS.mine) if (m.c === col && m.cash > 0) {
+    const v = m.cash * RL_PAY[col] / sellMult(), b = S.bets.find(o => o.c === col);
+    if (b) { b.n += m.n; b.v += v; } else S.bets.push({ c: col, n: m.n, v });
+  }
+  // in co-op the host adds each guest's winnings to their credit, so the bag sells for its new value
+  if (NET.coop && NET.isHost) for (const o of others) if (o.won > 0) credit(o.id, o.won / sellMult());
   const theirs = others.filter(o => o.won >= 0.005).map(o => `${o.name} won ${fmt(o.won)}`).join(' · ');
-  if (won >= 0.005) { floaty('+' + fmt(won)); col === 'green' ? fanfare() : sellSound(); toast(`${n} ${RL_NAME[col]}! You won ${fmt(won)}${theirs ? ' · ' + theirs : ''}`, 'good', 3.5); }
+  if (won >= 0.005) { floaty(fmt(won) + ' on the table'); col === 'green' ? fanfare() : sellSound(); toast(`${n} ${RL_NAME[col]}! Your bag is now worth ${fmt(won)} · spin again, or press ${isTouch ? 'USE' : 'E'} on it to pick it up${theirs ? ' · ' + theirs : ''}`, 'good', 4.5); }
   else if (RLS.mine.length) { denySound(); toast(`${n} ${RL_NAME[col]} · the house keeps your ${fmt(RLS.stake)}${theirs ? ' · ' + theirs : ''}`, 'warn', 3.5); }
   else if (rlNear() || theirs) toast(`${n} ${RL_NAME[col]}${theirs ? ' · ' + theirs : ' · nobody won'}`, theirs ? 'good' : '', 3);
   RLS.phase = 'done'; RLS.t = 0; RLS.mine = []; RLS.others = []; save();
@@ -1614,7 +1629,7 @@ function updateRoulette(dt) {
     }
   }
   // light up the colour you're aiming at
-  const a = state === 'play' && RLS.phase === 'idle' && (S.bag || S.carry.length) && rlNear() ? rlAim() : null;
+  const a = state === 'play' && RLS.phase === 'idle' && (S.bag || S.carry.length || S.bets.length) && rlNear() ? rlAim() : null;
   rlHi.visible = !!a;
   if (a) { rlHi.position.set(a.x, RL.H + 0.008, a.z); rlHi.scale.set(a.x1 - a.x0, a.z1 - a.z0, 1); }
 }
@@ -1629,7 +1644,9 @@ function rlPrompt() {
     if (S.bag) lines.push(`<kbd>${kb}</kbd> Bet your bag on ${RL_NAME[a.c]} (${fmt(rlCash(S.bagValue))})`);
     if (S.carry.length) lines.push(`<kbd>${kg}</kbd> Bet the bags in your arms on ${RL_NAME[a.c]} (${fmt(rlCash(carryValue()))})`);
   } else if (S.bag || S.carry.length) lines.push('Aim at red, green or black on the table to bet');
-  if (S.bets.length || others.length) lines.push(`<kbd>${ke}</kbd> Spin${S.bets.length ? ' · you: ' + S.bets.map(b => `${RL_NAME[b.c]} ${fmt(rlCash(b.v))}`).join(', ') : ''}`);
+  const mineHere = rlMyBetAt();
+  if (mineHere) lines.push(`<kbd>${ke}</kbd> Pick up your bag on ${RL_NAME[mineHere.c]} (${fmt(rlCash(mineHere.v))}) · look away from it to spin`);
+  else if (S.bets.length || others.length) lines.push(`<kbd>${ke}</kbd> Spin${S.bets.length ? ' · you: ' + S.bets.map(b => `${RL_NAME[b.c]} ${fmt(rlCash(b.v))}`).join(', ') : ''}`);
   if (theirs) lines.push(`On the table: ${theirs}`);
   if (!lines.length) lines.push('Bring bags of grass to bet on red, green or black');
   return lines.map(l => `<div class="pill">${l}</div>`).join('');
@@ -2793,7 +2810,10 @@ function nearestInteract() {
   return best;
 }
 function useAction() {
-  if (rlNear() && (S.bets.length || RLS.phase !== 'idle' || rlOthersBets().length)) { rlSpin(); return; }
+  if (rlNear()) {
+    const b = rlMyBetAt(); if (b) { rlTake(b); return; }
+    if (S.bets.length || RLS.phase !== 'idle' || rlOthersBets().length) { rlSpin(); return; }
+  }
   const it = nearestInteract();
   if (it?.type === 'tool') { pickUpTool(it.id); return; }
   if (it?.type === 'sack') {
